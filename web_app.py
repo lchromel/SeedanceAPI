@@ -277,6 +277,16 @@ def remote_image_as_data_url(url):
     return f"data:{content_type};base64,{encoded}"
 
 
+def redact_large_values(value):
+    if isinstance(value, dict):
+        return {key: redact_large_values(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [redact_large_values(item) for item in value]
+    if isinstance(value, str) and value.startswith("data:") and len(value) > 120:
+        return value[:80] + "...[redacted]"
+    return value
+
+
 def build_submit_payload(provider_id, data):
     prompt = str(data.get("prompt", "")).strip()
     if not prompt and not any(data.get(name) for name in ("imageUrls", "firstFrameUrl", "lastFrameUrl", "videoUrls")):
@@ -290,6 +300,8 @@ def build_submit_payload(provider_id, data):
     audio_urls = split_urls(data.get("audioUrls"))
 
     if provider_id == "byteplus":
+        if not prompt:
+            raise ValueError("Prompt is required for BytePlus Seedance generation.")
         content = []
         if prompt:
             content.append({"type": "text", "text": prompt})
@@ -557,13 +569,30 @@ class SeedanceHandler(BaseHTTPRequestHandler):
             url = endpoint_url(provider, provider["submit_path"], base_url=base_url)
             status_code, response_payload = request_json("POST", url, api_key, payload)
             normalized = normalize_submit(provider_id, status_code, response_payload)
-            normalized["request"] = payload
+            normalized["request"] = redact_large_values(payload)
+            if not normalized["ok"]:
+                sys.stderr.write(
+                    "Generate failed: "
+                    + json.dumps(
+                        {
+                            "provider": provider_id,
+                            "status_code": status_code,
+                            "response": response_payload,
+                            "request": redact_large_values(payload),
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
             json_response(self, 200 if normalized["ok"] else status_code, normalized)
         except PermissionError as exc:
+            sys.stderr.write(f"Generate permission error: {exc}\n")
             json_response(self, 401, {"error": str(exc)})
         except (ValueError, json.JSONDecodeError) as exc:
+            sys.stderr.write(f"Generate bad request: {exc}\n")
             json_response(self, 400, {"error": str(exc)})
         except RuntimeError as exc:
+            sys.stderr.write(f"Generate runtime error: {exc}\n")
             json_response(self, 502, {"error": str(exc)})
 
     def handle_status(self, params):
@@ -619,7 +648,7 @@ HTML = """<!doctype html>
         <section class="form-section scene-section">
           <h2>Scene</h2>
           <label>Prompt
-            <textarea name="prompt" rows="7" maxlength="4000" placeholder="A cinematic aerial shot over coastline at golden hour, slow push-in, soft natural light"></textarea>
+            <textarea name="prompt" rows="7" maxlength="4000" placeholder="Describe your video scene...">A cinematic aerial shot over coastline at golden hour, slow push-in, soft natural light</textarea>
           </label>
 
           <div class="upload-grid">
