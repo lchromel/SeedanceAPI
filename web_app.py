@@ -287,6 +287,28 @@ def redact_large_values(value):
     return value
 
 
+def provider_error_message(payload):
+    if not isinstance(payload, dict):
+        return ""
+    error = payload.get("error") or payload.get("Error")
+    if isinstance(error, dict):
+        code = str(error.get("code") or error.get("Code") or "").strip()
+        message = str(error.get("message") or error.get("Message") or "").strip()
+        if code == "InputImageSensitiveContentDetected.PrivacyInformation":
+            return (
+                "BytePlus rejected the reference image because it may contain a real person "
+                "or privacy-sensitive biometric information. Use a non-identifiable, synthetic, "
+                "licensed model image, or generate without an image reference."
+            )
+        return f"{code}: {message}".strip(": ") or message or code
+    if error:
+        return str(error).strip()
+    for key, value in walk_json_values(payload):
+        if str(key).lower() in {"error", "message", "error_message"} and value:
+            return str(value).strip()
+    return ""
+
+
 def build_submit_payload(provider_id, data):
     prompt = str(data.get("prompt", "")).strip()
     if not prompt and not any(data.get(name) for name in ("imageUrls", "firstFrameUrl", "lastFrameUrl", "videoUrls")):
@@ -571,6 +593,7 @@ class SeedanceHandler(BaseHTTPRequestHandler):
             normalized = normalize_submit(provider_id, status_code, response_payload)
             normalized["request"] = redact_large_values(payload)
             if not normalized["ok"]:
+                normalized["error"] = provider_error_message(response_payload) or f"Provider returned HTTP {status_code}"
                 sys.stderr.write(
                     "Generate failed: "
                     + json.dumps(
