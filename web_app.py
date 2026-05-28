@@ -34,6 +34,7 @@ PROVIDERS = {
         "ratios": ["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
         "resolutions": ["480p", "720p", "1080p"],
         "token_names": ["ARK_API_KEY", "BYTEPLUS_ARK_API_KEY", "BYTEPLUS_API_KEY", "SEEDANCE_API_KEY"],
+        "endpoint_names": ["SEEDANCE_ENDPOINT_ID", "BYTEPLUS_ARK_ENDPOINT_ID", "ARK_ENDPOINT_ID"],
     },
     "seedanceapi": {
         "name": "SD 2.0 API",
@@ -91,6 +92,13 @@ def get_secret(names):
         if value:
             return value
     return ""
+
+
+def default_model_for_provider(provider):
+    endpoint_id = get_secret(provider.get("endpoint_names", []))
+    if endpoint_id:
+        return endpoint_id
+    return provider["models"][0]
 
 
 def json_response(handler, status, payload):
@@ -314,7 +322,7 @@ def build_submit_payload(provider_id, data):
     if not prompt and not any(data.get(name) for name in ("imageUrls", "firstFrameUrl", "lastFrameUrl", "videoUrls")):
         raise ValueError("Введите prompt или добавьте хотя бы один reference URL.")
 
-    model = data.get("model") or PROVIDERS[provider_id]["models"][0]
+    model = data.get("endpoint") or data.get("model") or default_model_for_provider(PROVIDERS[provider_id])
     duration = int(data.get("duration") or 5)
     ratio = data.get("aspectRatio") or "16:9"
     image_urls = split_urls(data.get("imageUrls"))
@@ -520,6 +528,7 @@ class SeedanceHandler(BaseHTTPRequestHandler):
                     "ratios": provider["ratios"],
                     "resolutions": provider["resolutions"],
                     "hasServerKey": bool(get_secret(provider["token_names"])),
+                    "endpointId": default_model_for_provider(provider),
                     "baseUrl": provider["base_url"],
                 }
             json_response(self, 200, {"providers": providers})
@@ -686,6 +695,9 @@ HTML = """<!doctype html>
 
         <section class="form-section settings-section">
           <h2>Settings</h2>
+          <label>Endpoint ID
+            <input name="endpoint" id="endpoint" type="text" placeholder="BytePlus endpoint ID">
+          </label>
           <div class="duration-control">
             <div class="duration-head">
               <label for="duration">Duration</label>
@@ -1197,6 +1209,7 @@ const $ = (selector) => document.querySelector(selector);
 const form = $("#generationForm");
 const durationEl = $("#duration");
 const durationValue = $("#durationValue");
+const endpointEl = $("#endpoint");
 const ratioEl = $("#aspectRatio");
 const resolutionEl = $("#resolution");
 const rawOutput = $("#rawOutput");
@@ -1236,6 +1249,7 @@ function currentProvider() {
 
 function refreshProviderFields() {
   const provider = currentProvider();
+  endpointEl.value = provider.endpointId || provider.models[0] || "";
   optionList(ratioEl, provider.ratios, "16:9");
   if (provider.resolutions.length) {
     optionList(resolutionEl, provider.resolutions, "720p");
@@ -1253,7 +1267,8 @@ function collectPayload() {
   const data = Object.fromEntries(new FormData(form).entries());
   const provider = currentProvider();
   data.provider = state.provider;
-  data.model = provider.models[0];
+  data.endpoint = endpointEl.value.trim() || provider.endpointId || provider.models[0];
+  data.model = data.endpoint;
   data.baseUrl = provider.baseUrl;
   data.generateAudio = form.generateAudio.checked;
   data.returnLastFrame = form.returnLastFrame.checked;

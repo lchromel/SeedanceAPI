@@ -28,12 +28,20 @@ SEEDANCE_API_KEY="your_key"
 ARK_API_KEY="your_key"
 ```
 
+Если BytePlus выдал отдельный endpoint ID, добавьте его тоже:
+
+```env
+SEEDANCE_ENDPOINT_ID="your_endpoint_id"
+```
+
 Также поддерживаются:
 
 ```env
 BYTEPLUS_ARK_API_KEY="your_key"
 BYTEPLUS_API_KEY="your_key"
 SEEDANCE_API_KEY="your_key"
+BYTEPLUS_ARK_ENDPOINT_ID="your_endpoint_id"
+ARK_ENDPOINT_ID="your_endpoint_id"
 ```
 
 Для reAPI:
@@ -123,6 +131,7 @@ MAX_UPLOAD_BYTES=104857600
 - Submit: `POST /contents/generations/tasks`
 - Status: `GET /contents/generations/tasks/{task_id}`
 - Model: `dreamina-seedance-2-0-260128`
+- Endpoint env: `SEEDANCE_ENDPOINT_ID`, `BYTEPLUS_ARK_ENDPOINT_ID`, `ARK_ENDPOINT_ID`
 - Token env: `ARK_API_KEY`, `BYTEPLUS_ARK_API_KEY`, `BYTEPLUS_API_KEY`, `SEEDANCE_API_KEY`
 
 `seedanceapi`
