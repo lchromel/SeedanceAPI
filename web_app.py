@@ -354,6 +354,10 @@ def build_submit_payload(provider_id, data):
                     "role": role,
                 }
             )
+        for video_url in video_urls[:3]:
+            content.append({"type": "video_url", "video_url": {"url": video_url}})
+        for audio_url in audio_urls[:3]:
+            content.append({"type": "audio_url", "audio_url": {"url": audio_url}})
 
         payload = {
             "model": model,
