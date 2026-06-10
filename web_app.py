@@ -319,7 +319,7 @@ def provider_error_message(payload):
 
 def build_submit_payload(provider_id, data):
     prompt = str(data.get("prompt", "")).strip()
-    if not prompt and not any(data.get(name) for name in ("imageUrls", "firstFrameUrl", "lastFrameUrl", "videoUrls")):
+    if not prompt and not any(data.get(name) for name in ("imageUrls", "firstFrameUrl", "lastFrameUrl", "videoUrls", "audioUrls")):
         raise ValueError("Введите prompt или добавьте хотя бы один reference URL.")
 
     model = data.get("endpoint") or data.get("model") or default_model_for_provider(PROVIDERS[provider_id])
@@ -687,10 +687,18 @@ HTML = """<!doctype html>
             <label class="upload-tile"><span class="upload-plus">+</span><span>Images</span>
               <input id="imageUpload" type="file" accept="image/*" multiple>
             </label>
+            <label class="upload-tile"><span class="upload-plus">+</span><span>Videos</span>
+              <input id="videoUpload" type="file" accept="video/*" multiple>
+            </label>
+            <label class="upload-tile"><span class="upload-plus">+</span><span>Audio</span>
+              <input id="audioUpload" type="file" accept="audio/*" multiple>
+            </label>
           </div>
           <div class="reference-preview" id="referencePreview"></div>
           <div class="upload-status" id="uploadStatus">Файлы будут загружены перед отправкой задачи.</div>
           <input name="imageUrls" type="hidden">
+          <input name="videoUrls" type="hidden">
+          <input name="audioUrls" type="hidden">
         </section>
 
         <section class="form-section settings-section">
@@ -911,7 +919,7 @@ form { display: grid; gap: 16px; }
 
 .upload-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -1221,6 +1229,8 @@ const submitBtn = $("#submitBtn");
 const keyStatus = $("#keyStatus");
 const uploadStatus = $("#uploadStatus");
 const imageUpload = $("#imageUpload");
+const videoUpload = $("#videoUpload");
+const audioUpload = $("#audioUpload");
 const referencePreview = $("#referencePreview");
 
 function pretty(data) {
@@ -1292,7 +1302,9 @@ function updateDurationSlider() {
 }
 
 function renderReferencePreview() {
-  const files = imageUpload && imageUpload.files ? Array.from(imageUpload.files) : [];
+  const files = [imageUpload, videoUpload, audioUpload].flatMap((input) => (
+    input && input.files ? Array.from(input.files) : []
+  ));
   referencePreview.innerHTML = "";
   if (!files.length) {
     referencePreview.hidden = true;
@@ -1364,7 +1376,9 @@ async function uploadInputFiles(input, targetField, mode = "append") {
 
 async function uploadReferenceFiles() {
   const groups = [
-    [imageUpload, "imageUrls", "append"]
+    [imageUpload, "imageUrls", "append"],
+    [videoUpload, "videoUrls", "append"],
+    [audioUpload, "audioUrls", "append"]
   ];
   const totalFiles = groups.reduce((count, [input]) => count + (input && input.files ? input.files.length : 0), 0);
   if (!totalFiles) return;
@@ -1455,7 +1469,9 @@ async function boot() {
   state.providerConfig = state.config.providers[state.provider];
   form.addEventListener("submit", submitGeneration);
   pollBtn.addEventListener("click", () => pollStatus(true));
-  if (imageUpload) imageUpload.addEventListener("change", renderReferencePreview);
+  [imageUpload, videoUpload, audioUpload].forEach((input) => {
+    if (input) input.addEventListener("change", renderReferencePreview);
+  });
   durationEl.addEventListener("input", updateDurationSlider);
   refreshProviderFields();
   pretty({ ready: true, provider: state.provider });
