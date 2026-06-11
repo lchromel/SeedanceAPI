@@ -684,7 +684,10 @@ HTML = """<!doctype html>
         <section class="form-section scene-section">
           <h2>Scene</h2>
           <label>Prompt
-            <textarea name="prompt" rows="7" maxlength="4000" placeholder="Describe your video scene...">A cinematic aerial shot over coastline at golden hour, slow push-in, soft natural light</textarea>
+            <div class="prompt-editor">
+              <div class="prompt-highlight" id="promptHighlight" aria-hidden="true"></div>
+              <textarea name="prompt" rows="7" maxlength="4000" placeholder="Describe your video scene...">A cinematic aerial shot over coastline at golden hour, slow push-in, soft natural light</textarea>
+            </div>
           </label>
 
           <div class="upload-grid">
@@ -878,6 +881,59 @@ input:focus, select:focus, textarea:focus {
   box-shadow: 0 0 0 3px rgba(124, 58, 237, .18);
 }
 
+.prompt-editor {
+  position: relative;
+  display: grid;
+}
+
+.prompt-editor textarea {
+  position: relative;
+  z-index: 2;
+  background: transparent;
+  border-color: transparent;
+  color: transparent;
+  caret-color: var(--ink);
+}
+
+.prompt-editor textarea:focus {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.prompt-editor textarea::selection {
+  background: rgba(124, 58, 237, .35);
+  color: transparent;
+}
+
+.prompt-highlight {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  min-height: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--field);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
+.prompt-editor:focus-within .prompt-highlight {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, .18);
+}
+
+.prompt-token {
+  color: #bef264;
+  font-weight: 900;
+}
+
 form { display: grid; gap: 16px; }
 .form-section {
   display: grid;
@@ -936,7 +992,7 @@ form { display: grid; gap: 16px; }
 }
 
 .upload-tile-wide {
-  min-height: 126px;
+  min-height: 63px;
 }
 
 .duration-control {
@@ -1284,6 +1340,7 @@ const submitBtn = $("#submitBtn");
 const keyStatus = $("#keyStatus");
 const uploadStatus = $("#uploadStatus");
 const promptEl = form.elements.prompt;
+const promptHighlight = $("#promptHighlight");
 const referenceUpload = $("#referenceUpload");
 const imageReferenceList = $("#imageReferenceList");
 const referencePreview = $("#referencePreview");
@@ -1361,6 +1418,22 @@ function updateDurationSlider() {
   const pct = ((value - min) / (max - min)) * 100;
   durationEl.style.background = `linear-gradient(to right, var(--accent) 0%, var(--accent) ${pct}%, var(--field) ${pct}%, var(--field) 100%)`;
   durationValue.textContent = `${value}s`;
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function updatePromptHighlight() {
+  if (!promptHighlight || !promptEl) return;
+  const text = promptEl.value || "";
+  const html = escapeHtml(text).replace(/(@image\\d+)/gi, '<span class="prompt-token">$1</span>');
+  promptHighlight.innerHTML = html || "&nbsp;";
+  promptHighlight.scrollTop = promptEl.scrollTop;
+  promptHighlight.scrollLeft = promptEl.scrollLeft;
 }
 
 function syncImageUrlsField() {
@@ -1476,9 +1549,11 @@ function addMediaFiles(files) {
 }
 
 function moveImageRef(fromIndex, toIndex) {
-  if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= imageRefs.length || toIndex >= imageRefs.length) {
+  if (fromIndex < 0 || toIndex < 0 || fromIndex >= imageRefs.length || toIndex > imageRefs.length) {
     return;
   }
+  if (fromIndex < toIndex) toIndex -= 1;
+  if (fromIndex === toIndex) return;
   const [item] = imageRefs.splice(fromIndex, 1);
   imageRefs.splice(toIndex, 0, item);
   syncImageUrlsField();
@@ -1515,7 +1590,10 @@ function renderImageReferences() {
     item.addEventListener("drop", (event) => {
       event.preventDefault();
       const fromIndex = imageRefs.findIndex((entry) => entry.id === draggedImageRefId);
-      const toIndex = imageRefs.findIndex((entry) => entry.id === ref.id);
+      const targetIndex = imageRefs.findIndex((entry) => entry.id === ref.id);
+      const rect = item.getBoundingClientRect();
+      const insertAfter = event.clientX > rect.left + rect.width / 2;
+      const toIndex = targetIndex + (insertAfter ? 1 : 0);
       moveImageRef(fromIndex, toIndex);
     });
 
@@ -1718,7 +1796,12 @@ async function boot() {
     });
   }
   if (promptEl) {
-    promptEl.addEventListener("input", syncPromptImageUrls);
+    promptEl.addEventListener("input", () => {
+      updatePromptHighlight();
+      syncPromptImageUrls();
+    });
+    promptEl.addEventListener("scroll", updatePromptHighlight);
+    updatePromptHighlight();
     syncPromptImageUrls();
   }
   durationEl.addEventListener("input", updateDurationSlider);
