@@ -698,6 +698,11 @@ HTML = """<!doctype html>
               <input id="audioUpload" type="file" accept="audio/*" multiple>
             </label>
           </div>
+          <div class="url-add-row">
+            <input id="imageUrlInput" type="url" placeholder="Paste image URL">
+            <button id="addImageUrlBtn" type="button">Add URL</button>
+          </div>
+          <div class="image-reference-list" id="imageReferenceList" aria-label="Ordered image references"></div>
           <div class="reference-preview" id="referencePreview"></div>
           <div class="upload-status" id="uploadStatus">Файлы будут загружены перед отправкой задачи.</div>
           <input name="imageUrls" type="hidden">
@@ -1027,6 +1032,106 @@ input[type="range"]::-moz-range-thumb {
   line-height: 1;
 }
 
+.url-add-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.url-add-row button {
+  min-width: 96px;
+}
+
+.image-reference-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.image-reference-list:empty {
+  display: none;
+}
+
+.image-card {
+  position: relative;
+  aspect-ratio: 4 / 5;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--field);
+  cursor: grab;
+}
+
+.image-card.dragging {
+  opacity: .45;
+}
+
+.image-card img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.image-card-badge,
+.image-card-actions,
+.image-card-meta {
+  position: absolute;
+  z-index: 2;
+}
+
+.image-card-badge {
+  top: 6px;
+  left: 6px;
+  min-width: 26px;
+  height: 24px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(13, 13, 19, .76);
+  border: 1px solid rgba(255, 255, 255, .14);
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.image-card-actions {
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 4px;
+}
+
+.image-card-actions button {
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, .14);
+  background: rgba(13, 13, 19, .76);
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.image-card-actions button:disabled {
+  opacity: .35;
+  cursor: not-allowed;
+}
+
+.image-card-meta {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 22px 8px 7px;
+  background: linear-gradient(to top, rgba(13, 13, 19, .92), rgba(13, 13, 19, 0));
+  color: rgba(246, 247, 251, .82);
+  font-size: 10px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
 .reference-preview {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -1195,12 +1300,12 @@ pre {
   .shell { grid-template-columns: 1fr; }
   .workspace { border-right: 0; border-bottom: 1px solid var(--line); }
   .four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .upload-grid, .reference-preview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .upload-grid, .image-reference-list, .reference-preview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 620px) {
   .two, .four { grid-template-columns: 1fr; }
-  .upload-grid, .reference-preview { grid-template-columns: 1fr; }
+  .upload-grid, .image-reference-list, .reference-preview, .url-add-row { grid-template-columns: 1fr; }
   .topbar, .result-head { display: grid; }
   .actions { display: grid; }
 }
@@ -1233,9 +1338,15 @@ const submitBtn = $("#submitBtn");
 const keyStatus = $("#keyStatus");
 const uploadStatus = $("#uploadStatus");
 const imageUpload = $("#imageUpload");
+const imageUrlInput = $("#imageUrlInput");
+const addImageUrlBtn = $("#addImageUrlBtn");
+const imageReferenceList = $("#imageReferenceList");
 const videoUpload = $("#videoUpload");
 const audioUpload = $("#audioUpload");
 const referencePreview = $("#referencePreview");
+let imageRefCounter = 0;
+let draggedImageRefId = null;
+const imageRefs = [];
 
 function pretty(data) {
   rawOutput.textContent = JSON.stringify(data, null, 2);
@@ -1278,6 +1389,7 @@ function refreshProviderFields() {
 }
 
 function collectPayload() {
+  syncImageUrlsField();
   const data = Object.fromEntries(new FormData(form).entries());
   const provider = currentProvider();
   data.provider = state.provider;
@@ -1305,8 +1417,152 @@ function updateDurationSlider() {
   durationValue.textContent = `${value}s`;
 }
 
+function syncImageUrlsField() {
+  const field = form.elements.imageUrls;
+  if (!field) return;
+  field.value = imageRefs.map((ref) => ref.url).filter(Boolean).join("\\n");
+}
+
+function imageRefLabel(ref) {
+  if (ref.name) return ref.name;
+  try {
+    return new URL(ref.url).hostname;
+  } catch {
+    return ref.url || "Image";
+  }
+}
+
+function addImageRef(ref) {
+  imageRefs.push({
+    id: `img-${++imageRefCounter}`,
+    url: "",
+    previewUrl: "",
+    file: null,
+    name: "",
+    ...ref
+  });
+  syncImageUrlsField();
+  renderImageReferences();
+}
+
+function addImageFiles(files) {
+  Array.from(files || [])
+    .filter((file) => file.type.startsWith("image/"))
+    .forEach((file) => {
+      addImageRef({
+        file,
+        previewUrl: URL.createObjectURL(file),
+        name: file.name
+      });
+    });
+}
+
+function addImageUrl() {
+  const url = String(imageUrlInput.value || "").trim();
+  if (!url) return;
+  try {
+    const parsed = new URL(url);
+    if (!["http:", "https:", "data:"].includes(parsed.protocol)) {
+      throw new Error("Unsupported protocol");
+    }
+  } catch {
+    setUploadStatus("Нужна корректная ссылка на изображение.", "error");
+    return;
+  }
+  addImageRef({ url, previewUrl: url, name: url });
+  imageUrlInput.value = "";
+  setUploadStatus("Ссылка на изображение добавлена.");
+}
+
+function disposeImageRef(ref) {
+  if (ref.previewUrl && ref.previewUrl.startsWith("blob:")) {
+    URL.revokeObjectURL(ref.previewUrl);
+  }
+}
+
+function moveImageRef(fromIndex, toIndex) {
+  if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= imageRefs.length || toIndex >= imageRefs.length) {
+    return;
+  }
+  const [item] = imageRefs.splice(fromIndex, 1);
+  imageRefs.splice(toIndex, 0, item);
+  syncImageUrlsField();
+  renderImageReferences();
+}
+
+function removeImageRef(id) {
+  const index = imageRefs.findIndex((ref) => ref.id === id);
+  if (index < 0) return;
+  disposeImageRef(imageRefs[index]);
+  imageRefs.splice(index, 1);
+  syncImageUrlsField();
+  renderImageReferences();
+}
+
+function renderImageReferences() {
+  imageReferenceList.innerHTML = "";
+  imageRefs.forEach((ref, index) => {
+    const item = document.createElement("article");
+    item.className = "image-card";
+    item.draggable = true;
+    item.dataset.id = ref.id;
+
+    const img = document.createElement("img");
+    img.src = ref.previewUrl || ref.url;
+    img.alt = imageRefLabel(ref);
+    item.appendChild(img);
+
+    const badge = document.createElement("div");
+    badge.className = "image-card-badge";
+    badge.textContent = String(index + 1);
+    item.appendChild(badge);
+
+    const actions = document.createElement("div");
+    actions.className = "image-card-actions";
+    const up = document.createElement("button");
+    up.type = "button";
+    up.textContent = "Up";
+    up.disabled = index === 0;
+    up.addEventListener("click", () => moveImageRef(index, index - 1));
+    const down = document.createElement("button");
+    down.type = "button";
+    down.textContent = "Dn";
+    down.disabled = index === imageRefs.length - 1;
+    down.addEventListener("click", () => moveImageRef(index, index + 1));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "X";
+    remove.addEventListener("click", () => removeImageRef(ref.id));
+    actions.append(up, down, remove);
+    item.appendChild(actions);
+
+    const meta = document.createElement("div");
+    meta.className = "image-card-meta";
+    meta.textContent = ref.file && !ref.url ? `${imageRefLabel(ref)} · pending upload` : imageRefLabel(ref);
+    item.appendChild(meta);
+
+    item.addEventListener("dragstart", () => {
+      draggedImageRefId = ref.id;
+      item.classList.add("dragging");
+    });
+    item.addEventListener("dragend", () => {
+      draggedImageRefId = null;
+      item.classList.remove("dragging");
+    });
+    item.addEventListener("dragover", (event) => event.preventDefault());
+    item.addEventListener("drop", (event) => {
+      event.preventDefault();
+      const fromIndex = imageRefs.findIndex((entry) => entry.id === draggedImageRefId);
+      const toIndex = imageRefs.findIndex((entry) => entry.id === ref.id);
+      moveImageRef(fromIndex, toIndex);
+    });
+
+    imageReferenceList.appendChild(item);
+  });
+}
+
 function renderReferencePreview() {
-  const files = [imageUpload, videoUpload, audioUpload].flatMap((input) => (
+  const files = [videoUpload, audioUpload].flatMap((input) => (
     input && input.files ? Array.from(input.files) : []
   ));
   referencePreview.innerHTML = "";
@@ -1378,22 +1634,65 @@ async function uploadInputFiles(input, targetField, mode = "append") {
   return urls;
 }
 
+async function uploadSingleReferenceFile(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetch("/api/upload-reference", {
+    method: "POST",
+    body: formData
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || `Upload failed: HTTP ${response.status}`);
+  }
+  const first = Array.isArray(payload.files) ? payload.files[0] : null;
+  if (!first || !first.url) {
+    throw new Error("Upload failed: no URL returned");
+  }
+  return first.url;
+}
+
+async function uploadImageReferences(onProgress) {
+  let uploaded = 0;
+  for (const ref of imageRefs) {
+    if (!ref.file || ref.url) continue;
+    const previousPreview = ref.previewUrl;
+    ref.url = await uploadSingleReferenceFile(ref.file);
+    ref.previewUrl = ref.url;
+    ref.file = null;
+    if (previousPreview && previousPreview.startsWith("blob:")) {
+      URL.revokeObjectURL(previousPreview);
+    }
+    uploaded += 1;
+    syncImageUrlsField();
+    renderImageReferences();
+    if (onProgress) onProgress(uploaded);
+  }
+  syncImageUrlsField();
+  return uploaded;
+}
+
 async function uploadReferenceFiles() {
   const groups = [
-    [imageUpload, "imageUrls", "append"],
     [videoUpload, "videoUrls", "append"],
     [audioUpload, "audioUrls", "append"]
   ];
-  const totalFiles = groups.reduce((count, [input]) => count + (input && input.files ? input.files.length : 0), 0);
+  const pendingImages = imageRefs.filter((ref) => ref.file && !ref.url).length;
+  const totalFiles = pendingImages + groups.reduce((count, [input]) => count + (input && input.files ? input.files.length : 0), 0);
+  syncImageUrlsField();
   if (!totalFiles) return;
   setUploadStatus(`Загружаю файлов: ${totalFiles}...`, "busy");
   let uploaded = 0;
+  await uploadImageReferences((count) => {
+    uploaded = count;
+    setUploadStatus(`Загружено файлов: ${uploaded} из ${totalFiles}.`, "busy");
+  });
   for (const [input, field, mode] of groups) {
     const urls = await uploadInputFiles(input, field, mode);
     uploaded += urls.length;
     if (uploaded) setUploadStatus(`Загружено файлов: ${uploaded} из ${totalFiles}.`, "busy");
   }
-  setUploadStatus(`Загружено файлов: ${uploaded}. URL добавлены в поля ниже.`);
+  setUploadStatus(`Загружено файлов: ${uploaded}. Порядок изображений сохранен.`);
   renderReferencePreview();
 }
 
@@ -1473,7 +1772,22 @@ async function boot() {
   state.providerConfig = state.config.providers[state.provider];
   form.addEventListener("submit", submitGeneration);
   pollBtn.addEventListener("click", () => pollStatus(true));
-  [imageUpload, videoUpload, audioUpload].forEach((input) => {
+  if (imageUpload) {
+    imageUpload.addEventListener("change", () => {
+      addImageFiles(imageUpload.files);
+      imageUpload.value = "";
+    });
+  }
+  if (addImageUrlBtn) addImageUrlBtn.addEventListener("click", addImageUrl);
+  if (imageUrlInput) {
+    imageUrlInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        addImageUrl();
+      }
+    });
+  }
+  [videoUpload, audioUpload].forEach((input) => {
     if (input) input.addEventListener("change", renderReferencePreview);
   });
   durationEl.addEventListener("input", updateDurationSlider);
