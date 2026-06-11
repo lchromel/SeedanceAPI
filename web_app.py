@@ -686,6 +686,7 @@ HTML = """<!doctype html>
           <label>Prompt
             <textarea name="prompt" rows="7" maxlength="4000" placeholder="Describe your video scene...">A cinematic aerial shot over coastline at golden hour, slow push-in, soft natural light</textarea>
           </label>
+          <div class="prompt-image-links" id="promptImageLinks" aria-live="polite"></div>
 
           <div class="upload-grid">
             <label class="upload-tile"><span class="upload-plus">+</span><span>Images</span>
@@ -712,9 +713,6 @@ HTML = """<!doctype html>
 
         <section class="form-section settings-section">
           <h2>Settings</h2>
-          <label>Endpoint ID
-            <input name="endpoint" id="endpoint" type="text" placeholder="BytePlus endpoint ID">
-          </label>
           <div class="duration-control">
             <div class="duration-head">
               <label for="duration">Duration</label>
@@ -1062,6 +1060,10 @@ input[type="range"]::-moz-range-thumb {
   cursor: grab;
 }
 
+.image-card:active {
+  cursor: grabbing;
+}
+
 .image-card.dragging {
   opacity: .45;
 }
@@ -1073,9 +1075,7 @@ input[type="range"]::-moz-range-thumb {
   display: block;
 }
 
-.image-card-badge,
-.image-card-actions,
-.image-card-meta {
+.image-card-badge {
   position: absolute;
   z-index: 2;
 }
@@ -1096,40 +1096,43 @@ input[type="range"]::-moz-range-thumb {
   font-weight: 800;
 }
 
-.image-card-actions {
-  top: 6px;
-  right: 6px;
-  display: flex;
-  gap: 4px;
+.prompt-image-links {
+  display: grid;
+  gap: 6px;
 }
 
-.image-card-actions button {
-  width: 26px;
-  height: 24px;
-  padding: 0;
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, .14);
-  background: rgba(13, 13, 19, .76);
-  color: var(--ink);
-  font-size: 10px;
-  font-weight: 800;
+.prompt-image-links:empty {
+  display: none;
 }
 
-.image-card-actions button:disabled {
-  opacity: .35;
-  cursor: not-allowed;
+.prompt-image-link {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--field);
+  font-size: 12px;
 }
 
-.image-card-meta {
-  left: 0;
-  right: 0;
-  bottom: 0;
-  padding: 22px 8px 7px;
-  background: linear-gradient(to top, rgba(13, 13, 19, .92), rgba(13, 13, 19, 0));
+.prompt-image-token {
+  color: #bef264;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.prompt-image-link a,
+.prompt-image-pending {
   color: rgba(246, 247, 251, .82);
-  font-size: 10px;
-  line-height: 1.25;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prompt-image-link a:hover {
+  color: var(--ink);
 }
 
 .reference-preview {
@@ -1326,7 +1329,6 @@ const $ = (selector) => document.querySelector(selector);
 const form = $("#generationForm");
 const durationEl = $("#duration");
 const durationValue = $("#durationValue");
-const endpointEl = $("#endpoint");
 const ratioEl = $("#aspectRatio");
 const resolutionEl = $("#resolution");
 const rawOutput = $("#rawOutput");
@@ -1340,6 +1342,7 @@ const uploadStatus = $("#uploadStatus");
 const imageUpload = $("#imageUpload");
 const imageUrlInput = $("#imageUrlInput");
 const addImageUrlBtn = $("#addImageUrlBtn");
+const promptImageLinks = $("#promptImageLinks");
 const imageReferenceList = $("#imageReferenceList");
 const videoUpload = $("#videoUpload");
 const audioUpload = $("#audioUpload");
@@ -1374,7 +1377,6 @@ function currentProvider() {
 
 function refreshProviderFields() {
   const provider = currentProvider();
-  endpointEl.value = provider.endpointId || provider.models[0] || "";
   optionList(ratioEl, provider.ratios, "16:9");
   if (provider.resolutions.length) {
     optionList(resolutionEl, provider.resolutions, "720p");
@@ -1393,7 +1395,7 @@ function collectPayload() {
   const data = Object.fromEntries(new FormData(form).entries());
   const provider = currentProvider();
   data.provider = state.provider;
-  data.endpoint = endpointEl.value.trim() || provider.endpointId || provider.models[0];
+  data.endpoint = provider.endpointId || provider.models[0];
   data.model = data.endpoint;
   data.baseUrl = provider.baseUrl;
   data.generateAudio = form.generateAudio.checked;
@@ -1490,13 +1492,33 @@ function moveImageRef(fromIndex, toIndex) {
   renderImageReferences();
 }
 
-function removeImageRef(id) {
-  const index = imageRefs.findIndex((ref) => ref.id === id);
-  if (index < 0) return;
-  disposeImageRef(imageRefs[index]);
-  imageRefs.splice(index, 1);
-  syncImageUrlsField();
-  renderImageReferences();
+function renderPromptImageLinks() {
+  promptImageLinks.innerHTML = "";
+  imageRefs.forEach((ref, index) => {
+    const row = document.createElement("div");
+    row.className = "prompt-image-link";
+
+    const token = document.createElement("span");
+    token.className = "prompt-image-token";
+    token.textContent = `@Image ${index + 1}`;
+    row.appendChild(token);
+
+    if (ref.url) {
+      const link = document.createElement("a");
+      link.href = ref.url;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      link.textContent = ref.url;
+      row.appendChild(link);
+    } else {
+      const pending = document.createElement("span");
+      pending.className = "prompt-image-pending";
+      pending.textContent = `${imageRefLabel(ref)} · upload pending`;
+      row.appendChild(pending);
+    }
+
+    promptImageLinks.appendChild(row);
+  });
 }
 
 function renderImageReferences() {
@@ -1517,30 +1539,6 @@ function renderImageReferences() {
     badge.textContent = String(index + 1);
     item.appendChild(badge);
 
-    const actions = document.createElement("div");
-    actions.className = "image-card-actions";
-    const up = document.createElement("button");
-    up.type = "button";
-    up.textContent = "Up";
-    up.disabled = index === 0;
-    up.addEventListener("click", () => moveImageRef(index, index - 1));
-    const down = document.createElement("button");
-    down.type = "button";
-    down.textContent = "Dn";
-    down.disabled = index === imageRefs.length - 1;
-    down.addEventListener("click", () => moveImageRef(index, index + 1));
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.textContent = "X";
-    remove.addEventListener("click", () => removeImageRef(ref.id));
-    actions.append(up, down, remove);
-    item.appendChild(actions);
-
-    const meta = document.createElement("div");
-    meta.className = "image-card-meta";
-    meta.textContent = ref.file && !ref.url ? `${imageRefLabel(ref)} · pending upload` : imageRefLabel(ref);
-    item.appendChild(meta);
-
     item.addEventListener("dragstart", () => {
       draggedImageRefId = ref.id;
       item.classList.add("dragging");
@@ -1559,6 +1557,7 @@ function renderImageReferences() {
 
     imageReferenceList.appendChild(item);
   });
+  renderPromptImageLinks();
 }
 
 function renderReferencePreview() {
