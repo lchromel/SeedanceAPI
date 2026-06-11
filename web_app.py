@@ -686,22 +686,11 @@ HTML = """<!doctype html>
           <label>Prompt
             <textarea name="prompt" rows="7" maxlength="4000" placeholder="Describe your video scene...">A cinematic aerial shot over coastline at golden hour, slow push-in, soft natural light</textarea>
           </label>
-          <div class="prompt-image-links" id="promptImageLinks" aria-live="polite"></div>
 
           <div class="upload-grid">
-            <label class="upload-tile"><span class="upload-plus">+</span><span>Images</span>
-              <input id="imageUpload" type="file" accept="image/*" multiple>
+            <label class="upload-tile upload-tile-wide"><span class="upload-plus">+</span><span>Files</span>
+              <input id="referenceUpload" type="file" accept="image/*,video/*,audio/*" multiple>
             </label>
-            <label class="upload-tile"><span class="upload-plus">+</span><span>Videos</span>
-              <input id="videoUpload" type="file" accept="video/*" multiple>
-            </label>
-            <label class="upload-tile"><span class="upload-plus">+</span><span>Audio</span>
-              <input id="audioUpload" type="file" accept="audio/*" multiple>
-            </label>
-          </div>
-          <div class="url-add-row">
-            <input id="imageUrlInput" type="url" placeholder="Paste image URL">
-            <button id="addImageUrlBtn" type="button">Add URL</button>
           </div>
           <div class="image-reference-list" id="imageReferenceList" aria-label="Ordered image references"></div>
           <div class="reference-preview" id="referencePreview"></div>
@@ -926,7 +915,7 @@ form { display: grid; gap: 16px; }
 
 .upload-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
 }
 
@@ -944,6 +933,10 @@ form { display: grid; gap: 16px; }
   display: grid;
   place-items: center;
   gap: 7px;
+}
+
+.upload-tile-wide {
+  min-height: 126px;
 }
 
 .duration-control {
@@ -1030,16 +1023,6 @@ input[type="range"]::-moz-range-thumb {
   line-height: 1;
 }
 
-.url-add-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-}
-
-.url-add-row button {
-  min-width: 96px;
-}
-
 .image-reference-list {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1094,45 +1077,6 @@ input[type="range"]::-moz-range-thumb {
   place-items: center;
   font-size: 11px;
   font-weight: 800;
-}
-
-.prompt-image-links {
-  display: grid;
-  gap: 6px;
-}
-
-.prompt-image-links:empty {
-  display: none;
-}
-
-.prompt-image-link {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--field);
-  font-size: 12px;
-}
-
-.prompt-image-token {
-  color: #bef264;
-  font-weight: 850;
-  white-space: nowrap;
-}
-
-.prompt-image-link a,
-.prompt-image-pending {
-  color: rgba(246, 247, 251, .82);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.prompt-image-link a:hover {
-  color: var(--ink);
 }
 
 .reference-preview {
@@ -1308,7 +1252,7 @@ pre {
 
 @media (max-width: 620px) {
   .two, .four { grid-template-columns: 1fr; }
-  .upload-grid, .image-reference-list, .reference-preview, .url-add-row { grid-template-columns: 1fr; }
+  .upload-grid, .image-reference-list, .reference-preview { grid-template-columns: 1fr; }
   .topbar, .result-head { display: grid; }
   .actions { display: grid; }
 }
@@ -1339,17 +1283,15 @@ const pollBtn = $("#pollBtn");
 const submitBtn = $("#submitBtn");
 const keyStatus = $("#keyStatus");
 const uploadStatus = $("#uploadStatus");
-const imageUpload = $("#imageUpload");
-const imageUrlInput = $("#imageUrlInput");
-const addImageUrlBtn = $("#addImageUrlBtn");
-const promptImageLinks = $("#promptImageLinks");
+const promptEl = form.elements.prompt;
+const referenceUpload = $("#referenceUpload");
 const imageReferenceList = $("#imageReferenceList");
-const videoUpload = $("#videoUpload");
-const audioUpload = $("#audioUpload");
 const referencePreview = $("#referencePreview");
 let imageRefCounter = 0;
+let mediaRefCounter = 0;
 let draggedImageRefId = null;
 const imageRefs = [];
+const mediaRefs = [];
 
 function pretty(data) {
   rawOutput.textContent = JSON.stringify(data, null, 2);
@@ -1391,7 +1333,9 @@ function refreshProviderFields() {
 }
 
 function collectPayload() {
+  syncPromptImageUrls();
   syncImageUrlsField();
+  syncMediaUrlsFields();
   const data = Object.fromEntries(new FormData(form).entries());
   const provider = currentProvider();
   data.provider = state.provider;
@@ -1425,6 +1369,17 @@ function syncImageUrlsField() {
   field.value = imageRefs.map((ref) => ref.url).filter(Boolean).join("\\n");
 }
 
+function syncMediaUrlsFields() {
+  const videoField = form.elements.videoUrls;
+  const audioField = form.elements.audioUrls;
+  if (videoField) {
+    videoField.value = mediaRefs.filter((ref) => ref.kind === "video").map((ref) => ref.url).filter(Boolean).join("\\n");
+  }
+  if (audioField) {
+    audioField.value = mediaRefs.filter((ref) => ref.kind === "audio").map((ref) => ref.url).filter(Boolean).join("\\n");
+  }
+}
+
 function imageRefLabel(ref) {
   if (ref.name) return ref.name;
   try {
@@ -1435,6 +1390,7 @@ function imageRefLabel(ref) {
 }
 
 function addImageRef(ref) {
+  if (ref.url && imageRefs.some((item) => item.url === ref.url)) return;
   imageRefs.push({
     id: `img-${++imageRefCounter}`,
     url: "",
@@ -1445,6 +1401,44 @@ function addImageRef(ref) {
   });
   syncImageUrlsField();
   renderImageReferences();
+}
+
+function promptImageUrls() {
+  const prompt = String(promptEl.value || "");
+  const matches = prompt.match(/https?:\/\/[^\s"'<>]+/g) || [];
+  return matches
+    .map((url) => url.replace(/[),.;]+$/, ""))
+    .filter((url) => /\.(png|jpe?g|webp|gif|avif)(\?.*)?$/i.test(url));
+}
+
+function syncPromptImageUrls() {
+  const urls = promptImageUrls();
+  let changed = false;
+  for (let index = imageRefs.length - 1; index >= 0; index -= 1) {
+    const ref = imageRefs[index];
+    if (ref.source === "prompt" && !urls.includes(ref.url)) {
+      disposeImageRef(ref);
+      imageRefs.splice(index, 1);
+      changed = true;
+    }
+  }
+  urls.forEach((url) => {
+    if (!imageRefs.some((ref) => ref.url === url)) {
+      imageRefs.push({
+        id: `img-${++imageRefCounter}`,
+        url,
+        previewUrl: url,
+        file: null,
+        name: url,
+        source: "prompt"
+      });
+      changed = true;
+    }
+  });
+  if (changed) {
+    syncImageUrlsField();
+    renderImageReferences();
+  }
 }
 
 function addImageFiles(files) {
@@ -1459,27 +1453,26 @@ function addImageFiles(files) {
     });
 }
 
-function addImageUrl() {
-  const url = String(imageUrlInput.value || "").trim();
-  if (!url) return;
-  try {
-    const parsed = new URL(url);
-    if (!["http:", "https:", "data:"].includes(parsed.protocol)) {
-      throw new Error("Unsupported protocol");
-    }
-  } catch {
-    setUploadStatus("Нужна корректная ссылка на изображение.", "error");
-    return;
-  }
-  addImageRef({ url, previewUrl: url, name: url });
-  imageUrlInput.value = "";
-  setUploadStatus("Ссылка на изображение добавлена.");
-}
-
 function disposeImageRef(ref) {
   if (ref.previewUrl && ref.previewUrl.startsWith("blob:")) {
     URL.revokeObjectURL(ref.previewUrl);
   }
+}
+
+function addMediaFiles(files) {
+  Array.from(files || [])
+    .filter((file) => file.type.startsWith("video/") || file.type.startsWith("audio/"))
+    .forEach((file) => {
+      mediaRefs.push({
+        id: `media-${++mediaRefCounter}`,
+        kind: file.type.startsWith("video/") ? "video" : "audio",
+        file,
+        url: "",
+        previewUrl: URL.createObjectURL(file),
+        name: file.name
+      });
+    });
+  renderReferencePreview();
 }
 
 function moveImageRef(fromIndex, toIndex) {
@@ -1490,35 +1483,6 @@ function moveImageRef(fromIndex, toIndex) {
   imageRefs.splice(toIndex, 0, item);
   syncImageUrlsField();
   renderImageReferences();
-}
-
-function renderPromptImageLinks() {
-  promptImageLinks.innerHTML = "";
-  imageRefs.forEach((ref, index) => {
-    const row = document.createElement("div");
-    row.className = "prompt-image-link";
-
-    const token = document.createElement("span");
-    token.className = "prompt-image-token";
-    token.textContent = `@Image ${index + 1}`;
-    row.appendChild(token);
-
-    if (ref.url) {
-      const link = document.createElement("a");
-      link.href = ref.url;
-      link.target = "_blank";
-      link.rel = "noreferrer";
-      link.textContent = ref.url;
-      row.appendChild(link);
-    } else {
-      const pending = document.createElement("span");
-      pending.className = "prompt-image-pending";
-      pending.textContent = `${imageRefLabel(ref)} · upload pending`;
-      row.appendChild(pending);
-    }
-
-    promptImageLinks.appendChild(row);
-  });
 }
 
 function renderImageReferences() {
@@ -1557,80 +1521,37 @@ function renderImageReferences() {
 
     imageReferenceList.appendChild(item);
   });
-  renderPromptImageLinks();
 }
 
 function renderReferencePreview() {
-  const files = [videoUpload, audioUpload].flatMap((input) => (
-    input && input.files ? Array.from(input.files) : []
-  ));
   referencePreview.innerHTML = "";
-  if (!files.length) {
+  if (!mediaRefs.length) {
     referencePreview.hidden = true;
     return;
   }
   referencePreview.hidden = false;
-  files.slice(0, 10).forEach((file) => {
+  mediaRefs.slice(0, 10).forEach((ref) => {
     const item = document.createElement("div");
     item.className = "reference-thumb";
-    if (file.type.startsWith("image/")) {
-      const img = document.createElement("img");
-      img.src = URL.createObjectURL(file);
-      img.alt = file.name;
-      img.onload = () => URL.revokeObjectURL(img.src);
-      item.appendChild(img);
-    } else if (file.type.startsWith("video/")) {
+    if (ref.kind === "video") {
       const video = document.createElement("video");
-      video.src = URL.createObjectURL(file);
+      video.src = ref.previewUrl || ref.url;
       video.muted = true;
       video.playsInline = true;
-      video.onloadeddata = () => URL.revokeObjectURL(video.src);
       item.appendChild(video);
     } else {
       const label = document.createElement("span");
-      label.textContent = file.name;
+      label.textContent = ref.name || "Audio";
       item.appendChild(label);
     }
     referencePreview.appendChild(item);
   });
-  if (files.length > 10) {
+  if (mediaRefs.length > 10) {
     const more = document.createElement("div");
     more.className = "reference-thumb";
-    more.innerHTML = `<span>+${files.length - 10} more</span>`;
+    more.innerHTML = `<span>+${mediaRefs.length - 10} more</span>`;
     referencePreview.appendChild(more);
   }
-}
-
-function appendUrls(fieldName, urls) {
-  const field = form.elements[fieldName];
-  if (!field || !urls.length) return;
-  const current = String(field.value || "").trim();
-  const next = urls.join("\\n");
-  field.value = current ? `${current}\\n${next}` : next;
-}
-
-function setUrl(fieldName, url) {
-  const field = form.elements[fieldName];
-  if (field && url) field.value = url;
-}
-
-async function uploadInputFiles(input, targetField, mode = "append") {
-  if (!input || !input.files || !input.files.length) return [];
-  const formData = new FormData();
-  Array.from(input.files).forEach((file) => formData.append("file", file));
-  const response = await fetch("/api/upload-reference", {
-    method: "POST",
-    body: formData
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.error || `Upload failed: HTTP ${response.status}`);
-  }
-  const urls = Array.isArray(payload.files) ? payload.files.map((item) => item.url).filter(Boolean) : [];
-  if (mode === "set") setUrl(targetField, urls[0] || "");
-  else appendUrls(targetField, urls);
-  input.value = "";
-  return urls;
 }
 
 async function uploadSingleReferenceFile(file) {
@@ -1671,14 +1592,33 @@ async function uploadImageReferences(onProgress) {
   return uploaded;
 }
 
+async function uploadMediaReferences(onProgress) {
+  let uploaded = 0;
+  for (const ref of mediaRefs) {
+    if (!ref.file || ref.url) continue;
+    const previousPreview = ref.previewUrl;
+    ref.url = await uploadSingleReferenceFile(ref.file);
+    ref.previewUrl = ref.url;
+    ref.file = null;
+    if (previousPreview && previousPreview.startsWith("blob:")) {
+      URL.revokeObjectURL(previousPreview);
+    }
+    uploaded += 1;
+    syncMediaUrlsFields();
+    renderReferencePreview();
+    if (onProgress) onProgress(uploaded);
+  }
+  syncMediaUrlsFields();
+  return uploaded;
+}
+
 async function uploadReferenceFiles() {
-  const groups = [
-    [videoUpload, "videoUrls", "append"],
-    [audioUpload, "audioUrls", "append"]
-  ];
+  syncPromptImageUrls();
   const pendingImages = imageRefs.filter((ref) => ref.file && !ref.url).length;
-  const totalFiles = pendingImages + groups.reduce((count, [input]) => count + (input && input.files ? input.files.length : 0), 0);
+  const pendingMedia = mediaRefs.filter((ref) => ref.file && !ref.url).length;
+  const totalFiles = pendingImages + pendingMedia;
   syncImageUrlsField();
+  syncMediaUrlsFields();
   if (!totalFiles) return;
   setUploadStatus(`Загружаю файлов: ${totalFiles}...`, "busy");
   let uploaded = 0;
@@ -1686,12 +1626,11 @@ async function uploadReferenceFiles() {
     uploaded = count;
     setUploadStatus(`Загружено файлов: ${uploaded} из ${totalFiles}.`, "busy");
   });
-  for (const [input, field, mode] of groups) {
-    const urls = await uploadInputFiles(input, field, mode);
-    uploaded += urls.length;
-    if (uploaded) setUploadStatus(`Загружено файлов: ${uploaded} из ${totalFiles}.`, "busy");
-  }
-  setUploadStatus(`Загружено файлов: ${uploaded}. Порядок изображений сохранен.`);
+  await uploadMediaReferences((count) => {
+    uploaded = pendingImages + count;
+    setUploadStatus(`Загружено файлов: ${uploaded} из ${totalFiles}.`, "busy");
+  });
+  setUploadStatus(`Загружено файлов: ${uploaded}. References готовы.`);
   renderReferencePreview();
 }
 
@@ -1771,24 +1710,17 @@ async function boot() {
   state.providerConfig = state.config.providers[state.provider];
   form.addEventListener("submit", submitGeneration);
   pollBtn.addEventListener("click", () => pollStatus(true));
-  if (imageUpload) {
-    imageUpload.addEventListener("change", () => {
-      addImageFiles(imageUpload.files);
-      imageUpload.value = "";
+  if (referenceUpload) {
+    referenceUpload.addEventListener("change", () => {
+      addImageFiles(referenceUpload.files);
+      addMediaFiles(referenceUpload.files);
+      referenceUpload.value = "";
     });
   }
-  if (addImageUrlBtn) addImageUrlBtn.addEventListener("click", addImageUrl);
-  if (imageUrlInput) {
-    imageUrlInput.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        addImageUrl();
-      }
-    });
+  if (promptEl) {
+    promptEl.addEventListener("input", syncPromptImageUrls);
+    syncPromptImageUrls();
   }
-  [videoUpload, audioUpload].forEach((input) => {
-    if (input) input.addEventListener("change", renderReferencePreview);
-  });
   durationEl.addEventListener("input", updateDurationSlider);
   refreshProviderFields();
   pretty({ ready: true, provider: state.provider });
