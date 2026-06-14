@@ -685,8 +685,8 @@ HTML = """<!doctype html>
           <h2>Scene</h2>
           <label>Prompt
             <div class="prompt-editor">
-              <div class="prompt-highlight" id="promptHighlight" aria-hidden="true"></div>
-              <textarea name="prompt" rows="7" maxlength="4000" placeholder="Describe your video scene...">A cinematic aerial shot over coastline at golden hour, slow push-in, soft natural light</textarea>
+              <div id="promptEditor" class="prompt-input" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="Describe your video scene..."></div>
+              <textarea name="prompt" hidden>A cinematic aerial shot over coastline at golden hour, slow push-in, soft natural light</textarea>
             </div>
           </label>
 
@@ -881,36 +881,8 @@ input:focus, select:focus, textarea:focus {
   box-shadow: 0 0 0 3px rgba(124, 58, 237, .18);
 }
 
-.prompt-editor {
-  position: relative;
-  display: grid;
-}
-
-.prompt-editor textarea {
-  position: relative;
-  z-index: 2;
-  background: transparent;
-  border-color: transparent;
-  color: transparent;
-  caret-color: var(--ink);
-}
-
-.prompt-editor textarea:focus {
-  border-color: transparent;
-  box-shadow: none;
-}
-
-.prompt-editor textarea::selection {
-  background: rgba(124, 58, 237, .35);
-  color: transparent;
-}
-
-.prompt-highlight {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
+.prompt-input {
   width: 100%;
-  min-height: 100%;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--field);
@@ -921,12 +893,23 @@ input:focus, select:focus, textarea:focus {
   padding: 10px 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  pointer-events: none;
+  outline: none;
+  min-height: 170px;
+  max-height: 420px;
+  overflow: auto;
+  text-transform: none;
+  font-weight: 500;
 }
 
-.prompt-editor:focus-within .prompt-highlight {
+.prompt-input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(124, 58, 237, .18);
+}
+
+.prompt-input:empty::before {
+  content: attr(data-placeholder);
+  color: rgba(127, 129, 151, .75);
+  pointer-events: none;
 }
 
 .prompt-token {
@@ -1352,7 +1335,7 @@ const submitBtn = $("#submitBtn");
 const keyStatus = $("#keyStatus");
 const uploadStatus = $("#uploadStatus");
 const promptEl = form.elements.prompt;
-const promptHighlight = $("#promptHighlight");
+const promptEditor = $("#promptEditor");
 const referenceUpload = $("#referenceUpload");
 const imageReferenceList = $("#imageReferenceList");
 const referencePreview = $("#referencePreview");
@@ -1402,6 +1385,7 @@ function refreshProviderFields() {
 }
 
 function collectPayload() {
+  syncPromptField();
   syncPromptImageUrls();
   syncImageUrlsField();
   syncMediaUrlsFields();
@@ -1432,20 +1416,69 @@ function updateDurationSlider() {
   durationValue.textContent = `${value}s`;
 }
 
-function escapeHtml(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+function promptText() {
+  return (promptEditor ? promptEditor.innerText : promptEl.value || "").replace(/\u00a0/g, " ");
 }
 
-function updatePromptHighlight() {
-  if (!promptHighlight || !promptEl) return;
-  const text = promptEl.value || "";
-  const html = escapeHtml(text).replace(/(@image\\d+)/gi, '<span class="prompt-token">$1</span>');
-  promptHighlight.innerHTML = html || "&nbsp;";
-  promptHighlight.scrollTop = promptEl.scrollTop;
-  promptHighlight.scrollLeft = promptEl.scrollLeft;
+function syncPromptField() {
+  if (promptEl) promptEl.value = promptText();
+}
+
+function caretOffset(root) {
+  const selection = window.getSelection();
+  if (!selection || !selection.rangeCount) return 0;
+  const range = selection.getRangeAt(0);
+  const before = range.cloneRange();
+  before.selectNodeContents(root);
+  before.setEnd(range.endContainer, range.endOffset);
+  return before.toString().length;
+}
+
+function restoreCaret(root, offset) {
+  const selection = window.getSelection();
+  if (!selection) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let remaining = offset;
+  let node = walker.nextNode();
+  while (node) {
+    const length = node.nodeValue.length;
+    if (remaining <= length) {
+      const range = document.createRange();
+      range.setStart(node, remaining);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return;
+    }
+    remaining -= length;
+    node = walker.nextNode();
+  }
+  const range = document.createRange();
+  range.selectNodeContents(root);
+  range.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function renderPromptEditor(restore = true) {
+  if (!promptEditor) return;
+  const text = promptText();
+  const offset = restore ? caretOffset(promptEditor) : text.length;
+  promptEditor.replaceChildren();
+  const parts = text.split(/(@image\d+)/gi);
+  parts.forEach((part) => {
+    if (!part) return;
+    if (/^@image\d+$/i.test(part)) {
+      const token = document.createElement("span");
+      token.className = "prompt-token";
+      token.textContent = part;
+      promptEditor.appendChild(token);
+    } else {
+      promptEditor.appendChild(document.createTextNode(part));
+    }
+  });
+  syncPromptField();
+  if (restore) restoreCaret(promptEditor, offset);
 }
 
 function syncImageUrlsField() {
@@ -1834,13 +1867,13 @@ async function boot() {
       });
     }
   }
-  if (promptEl) {
-    promptEl.addEventListener("input", () => {
-      updatePromptHighlight();
+  if (promptEditor && promptEl) {
+    promptEditor.textContent = promptEl.value || "";
+    renderPromptEditor(false);
+    promptEditor.addEventListener("input", () => {
+      renderPromptEditor(true);
       syncPromptImageUrls();
     });
-    promptEl.addEventListener("scroll", updatePromptHighlight);
-    updatePromptHighlight();
     syncPromptImageUrls();
   }
   durationEl.addEventListener("input", updateDurationSlider);
