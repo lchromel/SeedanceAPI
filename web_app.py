@@ -1058,6 +1058,18 @@ input[type="range"]::-moz-range-thumb {
   transform: translateY(-1px);
 }
 
+.upload-tile.is-dragging-over {
+  border-color: var(--accent);
+  background: rgba(124, 58, 237, .12);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, .16);
+  transform: translateY(-1px);
+}
+
+.upload-tile.is-dragging-over .upload-plus {
+  border-color: rgba(196, 181, 253, .72);
+  background: rgba(124, 58, 237, .18);
+}
+
 .upload-tile input {
   position: absolute;
   inline-size: 1px;
@@ -1548,6 +1560,14 @@ function addMediaFiles(files) {
   renderReferencePreview();
 }
 
+function handleReferenceFiles(files) {
+  const list = Array.from(files || []);
+  if (!list.length) return;
+  addImageFiles(list);
+  addMediaFiles(list);
+  setUploadStatus(`Добавлено файлов: ${list.length}.`);
+}
+
 function moveImageRef(fromIndex, toIndex) {
   if (fromIndex < 0 || toIndex < 0 || fromIndex >= imageRefs.length || toIndex > imageRefs.length) {
     return;
@@ -1789,11 +1809,30 @@ async function boot() {
   form.addEventListener("submit", submitGeneration);
   pollBtn.addEventListener("click", () => pollStatus(true));
   if (referenceUpload) {
+    const dropZone = referenceUpload.closest(".upload-tile");
     referenceUpload.addEventListener("change", () => {
-      addImageFiles(referenceUpload.files);
-      addMediaFiles(referenceUpload.files);
+      handleReferenceFiles(referenceUpload.files);
       referenceUpload.value = "";
     });
+    if (dropZone) {
+      ["dragenter", "dragover"].forEach((eventName) => {
+        dropZone.addEventListener(eventName, (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          dropZone.classList.add("is-dragging-over");
+        });
+      });
+      ["dragleave", "drop"].forEach((eventName) => {
+        dropZone.addEventListener(eventName, (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          dropZone.classList.remove("is-dragging-over");
+        });
+      });
+      dropZone.addEventListener("drop", (event) => {
+        handleReferenceFiles(event.dataTransfer ? event.dataTransfer.files : []);
+      });
+    }
   }
   if (promptEl) {
     promptEl.addEventListener("input", () => {
