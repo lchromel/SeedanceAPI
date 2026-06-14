@@ -338,7 +338,8 @@ def build_submit_payload(provider_id, data):
 
         first_frame = str(data.get("firstFrameUrl") or "").strip()
         last_frame = str(data.get("lastFrameUrl") or "").strip()
-        if first_frame or last_frame:
+        uses_reference_media = bool(image_urls or video_urls or audio_urls)
+        if (first_frame or last_frame) and not uses_reference_media:
             for image_url, role in ((first_frame, "first_frame"), (last_frame, "last_frame")):
                 if not image_url:
                     continue
@@ -355,6 +356,7 @@ def build_submit_payload(provider_id, data):
                     {
                         "type": "image_url",
                         "image_url": {"url": remote_image_as_data_url(image_url)},
+                        "role": "reference",
                     }
                 )
         for video_url in video_urls[:3]:
