@@ -335,6 +335,8 @@ def build_submit_payload(provider_id, data):
         content = []
         if prompt:
             content.append({"type": "text", "text": prompt})
+        max_reference_items = max(0, 5 - len(content))
+        reference_items_used = 0
 
         first_frame = str(data.get("firstFrameUrl") or "").strip()
         last_frame = str(data.get("lastFrameUrl") or "").strip()
@@ -352,17 +354,26 @@ def build_submit_payload(provider_id, data):
                 )
         else:
             for image_url in image_urls[:9]:
+                if reference_items_used >= max_reference_items:
+                    break
                 content.append(
                     {
                         "type": "image_url",
                         "image_url": {"url": remote_image_as_data_url(image_url)},
-                        "role": "reference",
+                        "role": "reference_image",
                     }
                 )
+                reference_items_used += 1
         for video_url in video_urls[:3]:
-            content.append({"type": "video_url", "video_url": {"url": video_url}})
+            if reference_items_used >= max_reference_items:
+                break
+            content.append({"type": "video_url", "video_url": {"url": video_url}, "role": "reference_video"})
+            reference_items_used += 1
         for audio_url in audio_urls[:3]:
-            content.append({"type": "audio_url", "audio_url": {"url": audio_url}})
+            if reference_items_used >= max_reference_items:
+                break
+            content.append({"type": "audio_url", "audio_url": {"url": audio_url}, "role": "reference_audio"})
+            reference_items_used += 1
 
         payload = {
             "model": model,
