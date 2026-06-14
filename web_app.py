@@ -338,22 +338,25 @@ def build_submit_payload(provider_id, data):
 
         first_frame = str(data.get("firstFrameUrl") or "").strip()
         last_frame = str(data.get("lastFrameUrl") or "").strip()
-        seed_image_urls = []
-        if first_frame:
-            seed_image_urls.append((first_frame, "first_frame"))
-        elif image_urls:
-            seed_image_urls.append((image_urls[0], "first_frame"))
-        if last_frame:
-            seed_image_urls.append((last_frame, "last_frame"))
-
-        for image_url, role in seed_image_urls:
-            content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": remote_image_as_data_url(image_url)},
-                    "role": role,
-                }
-            )
+        if first_frame or last_frame:
+            for image_url, role in ((first_frame, "first_frame"), (last_frame, "last_frame")):
+                if not image_url:
+                    continue
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": remote_image_as_data_url(image_url)},
+                        "role": role,
+                    }
+                )
+        else:
+            for image_url in image_urls[:9]:
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": remote_image_as_data_url(image_url)},
+                    }
+                )
         for video_url in video_urls[:3]:
             content.append({"type": "video_url", "video_url": {"url": video_url}})
         for audio_url in audio_urls[:3]:
