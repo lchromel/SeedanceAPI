@@ -65,6 +65,10 @@ PROVIDERS = {
     },
 }
 
+BYTEPLUS_IMAGE_SUBMIT_PATH = "/images/generations"
+BYTEPLUS_IMAGE_MODELS = ["seedream-5-0-260128"]
+BYTEPLUS_IMAGE_ENDPOINT_NAMES = ["SEEDREAM_ENDPOINT_ID", "BYTEPLUS_SEEDREAM_ENDPOINT_ID", "ARK_IMAGE_ENDPOINT_ID"]
+
 
 def read_token_file():
     values = {}
@@ -99,6 +103,13 @@ def default_model_for_provider(provider):
     if endpoint_id:
         return endpoint_id
     return provider["models"][0]
+
+
+def default_byteplus_image_model():
+    endpoint_id = get_secret(BYTEPLUS_IMAGE_ENDPOINT_NAMES)
+    if endpoint_id:
+        return endpoint_id
+    return BYTEPLUS_IMAGE_MODELS[0]
 
 
 def json_response(handler, status, payload):
@@ -438,6 +449,65 @@ def build_submit_payload(provider_id, data):
     return payload
 
 
+def build_image_payload(provider_id, data):
+    if provider_id != "byteplus":
+        raise ValueError("Seedream image generation is supported only through BytePlus Ark.")
+    prompt = str(data.get("prompt", "")).strip()
+    if not prompt:
+        raise ValueError("Введите prompt для генерации изображения.")
+
+    image_urls = split_urls(data.get("imageUrls"))
+    payload = {
+        "model": str(data.get("imageModel") or default_byteplus_image_model()).strip(),
+        "prompt": prompt,
+        "size": str(data.get("imageSize") or "2K").strip(),
+        "response_format": "url",
+        "watermark": bool(data.get("imageWatermark")),
+    }
+    output_format = str(data.get("imageOutputFormat") or "png").strip().lower()
+    if output_format in {"png", "jpeg"}:
+        payload["output_format"] = output_format
+    if image_urls:
+        payload["image"] = [remote_image_as_data_url(url) for url in image_urls[:10]]
+    return payload
+
+
+def normalize_image_generation(status_code, payload):
+    data = payload.get("Result") if isinstance(payload, dict) else None
+    data = data if isinstance(data, dict) else payload if isinstance(payload, dict) else {}
+    image_urls = []
+    images = []
+    candidates = []
+    for item in data.get("data") or []:
+        if not isinstance(item, dict):
+            continue
+        candidates.append(item)
+        for nested in item.get("imagecontent") or item.get("image_content") or []:
+            if isinstance(nested, dict):
+                candidates.append(nested)
+    for item in candidates:
+        url = item.get("url")
+        b64_json = item.get("b64_json")
+        if isinstance(url, str) and url:
+            image_urls.append(url)
+            images.append({"url": url, "size": item.get("size")})
+        elif isinstance(b64_json, str) and b64_json:
+            data_url = b64_json if b64_json.startswith("data:") else f"data:image/png;base64,{b64_json}"
+            image_urls.append(data_url)
+            images.append({"url": data_url, "size": item.get("size")})
+    error = data.get("error") or data.get("Error")
+    return {
+        "imageUrls": image_urls,
+        "images": images,
+        "model": data.get("model"),
+        "created": data.get("created"),
+        "usage": data.get("usage"),
+        "error": error,
+        "raw": payload,
+        "ok": 200 <= status_code < 300 and bool(image_urls) and not error,
+    }
+
+
 def normalize_submit(provider_id, status_code, payload):
     if provider_id == "byteplus":
         result = payload.get("Result") if isinstance(payload, dict) else None
@@ -551,7 +621,19 @@ class SeedanceHandler(BaseHTTPRequestHandler):
                     "endpointId": default_model_for_provider(provider),
                     "baseUrl": provider["base_url"],
                 }
-            json_response(self, 200, {"providers": providers})
+            json_response(
+                self,
+                200,
+                {
+                    "providers": providers,
+                    "image": {
+                        "models": BYTEPLUS_IMAGE_MODELS,
+                        "model": default_byteplus_image_model(),
+                        "sizes": ["1K", "2K", "4K", "1024x1024", "1536x1024", "1024x1536", "2048x2048"],
+                        "outputFormats": ["png", "jpeg"],
+                    },
+                },
+            )
             return
         if path == "/api/status":
             self.handle_status(params)
@@ -561,6 +643,9 @@ class SeedanceHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/api/generate":
             self.handle_generate()
+            return
+        if self.path == "/api/generate-image":
+            self.handle_generate_image()
             return
         if self.path == "/api/upload-reference":
             self.handle_upload_reference()
@@ -614,7 +699,7 @@ class SeedanceHandler(BaseHTTPRequestHandler):
             api_key = str(data.get("apiKey") or get_secret(provider["token_names"])).strip()
             if not api_key:
                 names = ", ".join(provider["token_names"])
-                raise PermissionError(f"API key не найден. Добавьте {names} в {TOKEN_FILE} или введите ключ в UI.")
+                raise PermissionError(f"API key не найден. Добавьте {names} в Railway env или в {TOKEN_FILE}.")
             payload = build_submit_payload(provider_id, data)
             base_url = str(data.get("baseUrl") or provider["base_url"]).strip()
             url = endpoint_url(provider, provider["submit_path"], base_url=base_url)
@@ -647,6 +732,47 @@ class SeedanceHandler(BaseHTTPRequestHandler):
             sys.stderr.write(f"Generate runtime error: {exc}\n")
             json_response(self, 502, {"error": str(exc)})
 
+    def handle_generate_image(self):
+        try:
+            data = read_json_body(self)
+            provider_id = data.get("provider") or "byteplus"
+            provider = provider_config(provider_id)
+            api_key = str(data.get("apiKey") or get_secret(provider["token_names"])).strip()
+            if not api_key:
+                names = ", ".join(provider["token_names"])
+                raise PermissionError(f"API key не найден. Добавьте {names} в Railway env или в {TOKEN_FILE}.")
+            payload = build_image_payload(provider_id, data)
+            base_url = str(data.get("baseUrl") or provider["base_url"]).strip()
+            url = endpoint_url(provider, BYTEPLUS_IMAGE_SUBMIT_PATH, base_url=base_url)
+            status_code, response_payload = request_json("POST", url, api_key, payload, timeout=120)
+            normalized = normalize_image_generation(status_code, response_payload)
+            normalized["request"] = redact_large_values(payload)
+            if not normalized["ok"]:
+                normalized["error"] = provider_error_message(response_payload) or normalized.get("error") or f"Provider returned HTTP {status_code}"
+                sys.stderr.write(
+                    "Image generate failed: "
+                    + json.dumps(
+                        {
+                            "provider": provider_id,
+                            "status_code": status_code,
+                            "response": response_payload,
+                            "request": redact_large_values(payload),
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+            json_response(self, 200 if normalized["ok"] else status_code, normalized)
+        except PermissionError as exc:
+            sys.stderr.write(f"Image generate permission error: {exc}\n")
+            json_response(self, 401, {"error": str(exc)})
+        except (ValueError, json.JSONDecodeError) as exc:
+            sys.stderr.write(f"Image generate bad request: {exc}\n")
+            json_response(self, 400, {"error": str(exc)})
+        except RuntimeError as exc:
+            sys.stderr.write(f"Image generate runtime error: {exc}\n")
+            json_response(self, 502, {"error": str(exc)})
+
     def handle_status(self, params):
         try:
             provider_id = (params.get("provider") or ["byteplus"])[0]
@@ -657,7 +783,7 @@ class SeedanceHandler(BaseHTTPRequestHandler):
             api_key = (params.get("apiKey") or [get_secret(provider["token_names"])])[0].strip()
             if not api_key:
                 names = ", ".join(provider["token_names"])
-                raise PermissionError(f"API key не найден. Добавьте {names} в {TOKEN_FILE} или введите ключ в UI.")
+                raise PermissionError(f"API key не найден. Добавьте {names} в Railway env или в {TOKEN_FILE}.")
             base_url = (params.get("baseUrl") or [provider["base_url"]])[0].strip()
             if "{task_id}" in provider["status_path"]:
                 url = endpoint_url(provider, provider["status_path"], task_id=task_id, base_url=base_url)
@@ -689,14 +815,19 @@ HTML = """<!doctype html>
         <div class="brand">
           <div class="brand-mark">S2</div>
           <div>
-            <h1>Seedance 2 Video Studio</h1>
-            <p>Async API — submit task, poll status, preview MP4</p>
+            <h1>Seedance / Seedream Studio</h1>
+            <p>BytePlus Ark — video tasks and image generations</p>
           </div>
         </div>
         <div class="status-pill" id="keyStatus">Проверка ключа...</div>
       </div>
 
       <form id="generationForm" class="panel">
+        <div class="mode-switch" role="group" aria-label="Generation mode">
+          <button type="button" class="mode-btn active" data-mode="video">Video</button>
+          <button type="button" class="mode-btn" data-mode="image">Image</button>
+        </div>
+
         <section class="form-section scene-section">
           <h2>Scene</h2>
           <label>Prompt
@@ -721,7 +852,7 @@ HTML = """<!doctype html>
 
         <section class="form-section settings-section">
           <h2>Settings</h2>
-          <div class="duration-control">
+          <div class="duration-control video-setting">
             <div class="duration-head">
               <label for="duration">Duration</label>
               <span id="durationValue">5s</span>
@@ -737,12 +868,23 @@ HTML = """<!doctype html>
               <select name="resolution" id="resolution"></select>
             </label>
           </div>
+          <div class="grid two image-settings" hidden>
+            <label>Image Size
+              <select name="imageSize" id="imageSize"></select>
+            </label>
+            <label>Output Format
+              <select name="imageOutputFormat" id="imageOutputFormat"></select>
+            </label>
+          </div>
         </section>
 
-        <div class="checks">
+        <div class="checks video-options">
           <label><input name="generateAudio" type="checkbox"> Generate audio</label>
           <label><input name="returnLastFrame" type="checkbox"> Return last frame</label>
           <label><input name="webSearch" type="checkbox"> Web search tool</label>
+        </div>
+        <div class="checks image-options" hidden>
+          <label><input name="imageWatermark" type="checkbox"> Watermark</label>
         </div>
 
         <div class="actions">
@@ -761,7 +903,7 @@ HTML = """<!doctype html>
         <div class="status-pill idle" id="taskStatus">idle</div>
       </div>
       <div id="videoWrap" class="video-wrap">
-        <div class="empty">MP4 появится здесь после завершения задачи.</div>
+        <div class="empty">MP4 или изображение появится здесь после генерации.</div>
       </div>
       <pre id="rawOutput">{}</pre>
     </aside>
@@ -934,6 +1076,26 @@ input:focus, select:focus, textarea:focus {
 }
 
 form { display: grid; gap: 16px; }
+.mode-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--field);
+  padding: 4px;
+}
+.mode-btn {
+  min-height: 34px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+}
+.mode-btn.active {
+  background: var(--accent);
+  color: #fff;
+}
 .form-section {
   display: grid;
   gap: 14px;
@@ -1313,6 +1475,28 @@ video {
   object-fit: contain;
   background: #000;
 }
+.image-result-grid {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  padding: 12px;
+  align-content: start;
+  overflow: auto;
+}
+.image-result-grid a {
+  display: block;
+  min-width: 0;
+}
+.image-result-grid img {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #000;
+}
 .empty {
   color: var(--muted);
   padding: 24px;
@@ -1353,6 +1537,7 @@ JS = """
 const state = {
   config: null,
   taskId: "",
+  mode: "video",
   provider: "byteplus",
   providerConfig: null,
   baseUrl: "",
@@ -1365,6 +1550,8 @@ const durationEl = $("#duration");
 const durationValue = $("#durationValue");
 const ratioEl = $("#aspectRatio");
 const resolutionEl = $("#resolution");
+const imageSizeEl = $("#imageSize");
+const imageOutputFormatEl = $("#imageOutputFormat");
 const rawOutput = $("#rawOutput");
 const taskLine = $("#taskLine");
 const taskStatus = $("#taskStatus");
@@ -1378,6 +1565,11 @@ const promptEditor = $("#promptEditor");
 const referenceUpload = $("#referenceUpload");
 const imageReferenceList = $("#imageReferenceList");
 const referencePreview = $("#referencePreview");
+const modeButtons = document.querySelectorAll(".mode-btn");
+const videoSettings = document.querySelectorAll(".video-setting");
+const imageSettings = document.querySelectorAll(".image-settings");
+const videoOptions = document.querySelectorAll(".video-options");
+const imageOptions = document.querySelectorAll(".image-options");
 let imageRefCounter = 0;
 let mediaRefCounter = 0;
 let draggedImageRefId = null;
@@ -1408,6 +1600,28 @@ function currentProvider() {
   return state.providerConfig;
 }
 
+function setMode(mode) {
+  state.mode = mode === "image" ? "image" : "video";
+  modeButtons.forEach((button) => {
+    button.classList.toggle("active", button.dataset.mode === state.mode);
+  });
+  videoSettings.forEach((el) => {
+    el.hidden = state.mode !== "video";
+  });
+  videoOptions.forEach((el) => {
+    el.hidden = state.mode !== "video";
+  });
+  imageSettings.forEach((el) => {
+    el.hidden = state.mode !== "image";
+  });
+  imageOptions.forEach((el) => {
+    el.hidden = state.mode !== "image";
+  });
+  pollBtn.hidden = state.mode === "image";
+  pollBtn.disabled = state.mode === "image" || !state.taskId;
+  submitBtn.textContent = state.mode === "image" ? "Generate image" : "Generate video";
+}
+
 function refreshProviderFields() {
   const provider = currentProvider();
   optionList(ratioEl, provider.ratios, "16:9");
@@ -1420,7 +1634,12 @@ function refreshProviderFields() {
   }
   keyStatus.textContent = provider.hasServerKey ? "server key ready" : "key required";
   keyStatus.className = provider.hasServerKey ? "status-pill done" : "status-pill error";
+  if (state.config && state.config.image) {
+    optionList(imageSizeEl, state.config.image.sizes || ["2K"], "2K");
+    optionList(imageOutputFormatEl, state.config.image.outputFormats || ["png", "jpeg"], "png");
+  }
   updateDurationSlider();
+  setMode(state.mode);
 }
 
 function collectPayload() {
@@ -1437,6 +1656,8 @@ function collectPayload() {
   data.generateAudio = form.generateAudio.checked;
   data.returnLastFrame = form.returnLastFrame.checked;
   data.webSearch = form.webSearch.checked;
+  data.imageModel = state.config && state.config.image ? state.config.image.model : "";
+  data.imageWatermark = form.imageWatermark ? form.imageWatermark.checked : false;
   if (resolutionEl.disabled) delete data.resolution;
   return data;
 }
@@ -1891,21 +2112,53 @@ async function pollStatus(manual = false) {
   }
 }
 
+function renderImageResults(urls) {
+  const list = Array.isArray(urls) ? urls.filter(Boolean) : [];
+  if (!list.length) {
+    videoWrap.innerHTML = `<div class="empty">Изображения не вернулись в ответе API.</div>`;
+    return;
+  }
+  const grid = document.createElement("div");
+  grid.className = "image-result-grid";
+  list.forEach((url, index) => {
+    const link = document.createElement("a");
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = `Generated image ${index + 1}`;
+    link.appendChild(img);
+    grid.appendChild(link);
+  });
+  videoWrap.replaceChildren(grid);
+}
+
 async function submitGeneration(event) {
   event.preventDefault();
   submitBtn.disabled = true;
   submitBtn.textContent = "Submitting...";
   setStatus("submitting");
-  videoWrap.innerHTML = `<div class="empty">Задача отправляется...</div>`;
+  videoWrap.innerHTML = `<div class="empty">${state.mode === "image" ? "Изображение генерируется..." : "Задача отправляется..."}</div>`;
   try {
     await uploadReferenceFiles();
     const payload = collectPayload();
-    const data = await apiFetch("/api/generate", {
+    const endpoint = state.mode === "image" ? "/api/generate-image" : "/api/generate";
+    const data = await apiFetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
     pretty(data);
+    if (state.mode === "image") {
+      state.taskId = "";
+      clearInterval(state.pollTimer);
+      pollBtn.disabled = true;
+      renderImageResults(data.imageUrls || []);
+      taskLine.textContent = `Generated ${data.imageUrls ? data.imageUrls.length : 0} image(s).`;
+      setStatus("succeeded", "done");
+      return;
+    }
     state.taskId = data.taskId;
     taskLine.innerHTML = `Task <strong>${state.taskId}</strong>`;
     setStatus(data.status || "processing");
@@ -1920,7 +2173,7 @@ async function submitGeneration(event) {
     pretty({ error: error.message });
   } finally {
     submitBtn.disabled = false;
-    submitBtn.textContent = "Generate video";
+    submitBtn.textContent = state.mode === "image" ? "Generate image" : "Generate video";
   }
 }
 
@@ -1929,6 +2182,19 @@ async function boot() {
   state.provider = state.config.providers.byteplus ? "byteplus" : Object.keys(state.config.providers)[0];
   state.providerConfig = state.config.providers[state.provider];
   form.addEventListener("submit", submitGeneration);
+  modeButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      setMode(button.dataset.mode);
+      if (state.mode === "image") {
+        taskLine.textContent = "Seedream image generation is ready.";
+        videoWrap.innerHTML = `<div class="empty">Изображение появится здесь после генерации.</div>`;
+      } else {
+        taskLine.textContent = state.taskId ? `Task ${state.taskId}` : "Задача еще не отправлена.";
+        videoWrap.innerHTML = `<div class="empty">MP4 появится здесь после завершения задачи.</div>`;
+      }
+      setStatus("idle", "idle");
+    });
+  });
   pollBtn.addEventListener("click", () => pollStatus(true));
   if (referenceUpload) {
     const dropZone = referenceUpload.closest(".upload-tile");

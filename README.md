@@ -1,15 +1,16 @@
-# Seedance 2 Video Studio
+# Seedance / Seedream Studio
 
-Локальный web-сервис для генерации видео через Seedance 2 compatible async API.
+Локальный web-сервис для генерации видео через Seedance 2 и изображений через Seedream 5 compatible BytePlus Ark API.
 
 ## Возможности
 
 - Генерация через BytePlus Ark Seedance 2.0, как в Yango Perf.
+- Генерация изображений через BytePlus Ark Seedream 5 (`seedream-5-0-260128`).
 - Text-to-video через `seedanceapi.org/v2`.
 - Поддержка reAPI `doubao-seedance-2.0` variants.
-- Image-to-video, first/last frame, reference video/audio inputs where provider supports them.
+- Elements-style references через `@image1`, `@video1`, `@audio1` where provider supports them.
 - Upload reference image/video/audio files and serve them as public `/uploads/...` URLs.
-- Polling статуса задачи и предпросмотр готового MP4 в браузере.
+- Polling статуса видео-задачи, предпросмотр готового MP4 и синхронный предпросмотр Seedream images.
 - Чтение API ключей из `~/Desktop/tokens.txt` и переменных окружения.
 
 ## Ключи
@@ -34,6 +35,12 @@ ARK_API_KEY="your_key"
 SEEDANCE_ENDPOINT_ID="your_endpoint_id"
 ```
 
+Для Seedream image generation можно отдельно задать image endpoint ID:
+
+```env
+SEEDREAM_ENDPOINT_ID="your_image_endpoint_id"
+```
+
 Также поддерживаются:
 
 ```env
@@ -42,6 +49,8 @@ BYTEPLUS_API_KEY="your_key"
 SEEDANCE_API_KEY="your_key"
 BYTEPLUS_ARK_ENDPOINT_ID="your_endpoint_id"
 ARK_ENDPOINT_ID="your_endpoint_id"
+BYTEPLUS_SEEDREAM_ENDPOINT_ID="your_image_endpoint_id"
+ARK_IMAGE_ENDPOINT_ID="your_image_endpoint_id"
 ```
 
 Для reAPI:
@@ -49,8 +58,6 @@ ARK_ENDPOINT_ID="your_endpoint_id"
 ```env
 REAPI_API_KEY="your_key"
 ```
-
-Если ключа нет, его можно временно ввести в поле `API key override` в UI.
 
 ## Запуск
 
@@ -74,13 +81,7 @@ PORT=8090 python3 web_app.py
 
 ## Upload reference files
 
-В блоке `Reference inputs` можно загрузить:
-
-- image files для `Image URLs`
-- first frame image
-- last frame image
-- video refs
-- audio refs
+В блоке `Files` можно загрузить изображения, видео и аудио. Изображения можно сортировать drag-and-drop; в prompt их удобно указывать как `@image1`, `@image2`, а ссылки на изображения, вставленные прямо в prompt, автоматически подтягиваются как previews.
 
 Файлы сохраняются в `uploads/` и доступны как:
 
@@ -123,6 +124,30 @@ MAX_UPLOAD_BYTES=104857600
 }
 ```
 
+`POST /api/generate-image`
+
+```json
+{
+  "provider": "byteplus",
+  "prompt": "A vibrant editorial portrait, sculptural hat, studio lighting",
+  "imageSize": "2K",
+  "imageOutputFormat": "png",
+  "imageWatermark": false,
+  "imageUrls": "https://example.com/reference.png"
+}
+```
+
+Ответ нормализуется до:
+
+```json
+{
+  "imageUrls": ["https://...png"],
+  "images": [{"url": "https://...png", "size": "2048x2048"}],
+  "usage": {},
+  "raw": {}
+}
+```
+
 ## Провайдеры
 
 `byteplus`
@@ -130,8 +155,11 @@ MAX_UPLOAD_BYTES=104857600
 - Base URL: `https://ark.ap-southeast.bytepluses.com/api/v3`
 - Submit: `POST /contents/generations/tasks`
 - Status: `GET /contents/generations/tasks/{task_id}`
+- Image submit: `POST /images/generations`
 - Model: `dreamina-seedance-2-0-260128`
+- Image model: `seedream-5-0-260128`
 - Endpoint env: `SEEDANCE_ENDPOINT_ID`, `BYTEPLUS_ARK_ENDPOINT_ID`, `ARK_ENDPOINT_ID`
+- Image endpoint env: `SEEDREAM_ENDPOINT_ID`, `BYTEPLUS_SEEDREAM_ENDPOINT_ID`, `ARK_IMAGE_ENDPOINT_ID`
 - Token env: `ARK_API_KEY`, `BYTEPLUS_ARK_API_KEY`, `BYTEPLUS_API_KEY`, `SEEDANCE_API_KEY`
 
 `seedanceapi`
