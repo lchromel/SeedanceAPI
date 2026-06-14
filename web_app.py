@@ -1130,6 +1130,29 @@ input[type="range"]::-moz-range-thumb {
   font-weight: 800;
 }
 
+.reference-remove {
+  position: absolute;
+  z-index: 3;
+  top: 6px;
+  right: 6px;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, .14);
+  background: rgba(13, 13, 19, .78);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+
+.reference-remove:hover {
+  border-color: rgba(248, 113, 113, .55);
+  background: rgba(248, 113, 113, .18);
+}
+
 .reference-preview {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -1577,6 +1600,12 @@ function disposeImageRef(ref) {
   }
 }
 
+function disposeMediaRef(ref) {
+  if (ref.previewUrl && ref.previewUrl.startsWith("blob:")) {
+    URL.revokeObjectURL(ref.previewUrl);
+  }
+}
+
 function addMediaFiles(files) {
   Array.from(files || [])
     .filter((file) => file.type.startsWith("video/") || file.type.startsWith("audio/"))
@@ -1599,6 +1628,26 @@ function handleReferenceFiles(files) {
   addImageFiles(list);
   addMediaFiles(list);
   setUploadStatus(`Добавлено файлов: ${list.length}.`);
+}
+
+function removeImageRef(id) {
+  const index = imageRefs.findIndex((ref) => ref.id === id);
+  if (index < 0) return;
+  disposeImageRef(imageRefs[index]);
+  imageRefs.splice(index, 1);
+  syncImageUrlsField();
+  renderImageReferences();
+  setUploadStatus("Изображение удалено.");
+}
+
+function removeMediaRef(id) {
+  const index = mediaRefs.findIndex((ref) => ref.id === id);
+  if (index < 0) return;
+  disposeMediaRef(mediaRefs[index]);
+  mediaRefs.splice(index, 1);
+  syncMediaUrlsFields();
+  renderReferencePreview();
+  setUploadStatus("Файл удален.");
 }
 
 function moveImageRef(fromIndex, toIndex) {
@@ -1630,6 +1679,19 @@ function renderImageReferences() {
     badge.className = "image-card-badge";
     badge.textContent = String(index + 1);
     item.appendChild(badge);
+
+    const remove = document.createElement("button");
+    remove.className = "reference-remove";
+    remove.type = "button";
+    remove.textContent = "×";
+    remove.setAttribute("aria-label", `Remove image ${index + 1}`);
+    remove.draggable = false;
+    remove.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      removeImageRef(ref.id);
+    });
+    item.appendChild(remove);
 
     item.addEventListener("dragstart", () => {
       draggedImageRefId = ref.id;
@@ -1675,6 +1737,17 @@ function renderReferencePreview() {
       label.textContent = ref.name || "Audio";
       item.appendChild(label);
     }
+    const remove = document.createElement("button");
+    remove.className = "reference-remove";
+    remove.type = "button";
+    remove.textContent = "×";
+    remove.setAttribute("aria-label", `Remove ${ref.kind} file`);
+    remove.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      removeMediaRef(ref.id);
+    });
+    item.appendChild(remove);
     referencePreview.appendChild(item);
   });
   if (mediaRefs.length > 10) {
