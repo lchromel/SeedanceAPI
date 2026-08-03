@@ -2,10 +2,14 @@
 import cgi
 import json
 import base64
+import datetime
+import hashlib
+import hmac
 import mimetypes
 import os
 import re
 import sys
+import threading
 import time
 import uuid
 import urllib.error
@@ -18,7 +22,14 @@ APP_HOST = os.environ.get("HOST", "0.0.0.0")
 APP_PORT = int(os.environ.get("PORT", "8080"))
 TOKEN_FILE = os.path.expanduser(os.environ.get("TOKEN_FILE", "~/Desktop/tokens.txt"))
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_DIR = os.path.join(ROOT_DIR, "uploads")
+DATA_ROOT = os.path.abspath(
+    os.environ.get("SEEDANCE_DATA_DIR")
+    or os.environ.get("RAILWAY_VOLUME_MOUNT_PATH")
+    or ROOT_DIR
+)
+UPLOAD_DIR = os.path.join(DATA_ROOT, "uploads")
+MATERIAL_LIBRARY_FILE = os.path.join(DATA_ROOT, "material_library.json")
+MATERIAL_LIBRARY_LOCK = threading.Lock()
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
 ALLOWED_UPLOAD_MIME_PREFIXES = ("image/", "video/", "audio/")
 
@@ -68,6 +79,24 @@ PROVIDERS = {
 BYTEPLUS_IMAGE_SUBMIT_PATH = "/images/generations"
 BYTEPLUS_IMAGE_MODELS = ["seedream-5-0-260128"]
 BYTEPLUS_IMAGE_ENDPOINT_NAMES = ["SEEDREAM_ENDPOINT_ID", "BYTEPLUS_SEEDREAM_ENDPOINT_ID", "ARK_IMAGE_ENDPOINT_ID"]
+BYTEPLUS_ASSET_API_BASE_URL = os.environ.get(
+    "BYTEPLUS_ASSET_API_BASE_URL",
+    "https://ark.ap-southeast-1.byteplusapi.com",
+).rstrip("/")
+BYTEPLUS_ASSET_REGION = os.environ.get("BYTEPLUS_ASSET_REGION", "ap-southeast-1")
+BYTEPLUS_ASSET_PROJECT = os.environ.get("BYTEPLUS_ASSET_PROJECT", "default")
+BYTEPLUS_ACCESS_KEY_NAMES = [
+    "BYTEPLUS_ACCESS_KEY_ID",
+    "BYTEPLUS_ACCESS_KEY",
+    "BYTEPLUS_AK",
+    "ARK_ACCESS_KEY_ID",
+]
+BYTEPLUS_SECRET_KEY_NAMES = [
+    "BYTEPLUS_SECRET_ACCESS_KEY",
+    "BYTEPLUS_SECRET_KEY",
+    "BYTEPLUS_SK",
+    "ARK_SECRET_ACCESS_KEY",
+]
 
 
 def read_token_file():
@@ -181,10 +210,11 @@ def save_upload(field):
     if not any(content_type.startswith(prefix) for prefix in ALLOWED_UPLOAD_MIME_PREFIXES):
         raise ValueError("Only image, video, and audio uploads are supported")
     os.makedirs(UPLOAD_DIR, exist_ok=True)
-    file_name = safe_upload_name(original_name, content_type)
-    path = os.path.join(UPLOAD_DIR, file_name)
+    temp_name = f".upload-{uuid.uuid4().hex}.tmp"
+    temp_path = os.path.join(UPLOAD_DIR, temp_name)
     total = 0
-    with open(path, "wb") as output:
+    digest = hashlib.sha256()
+    with open(temp_path, "wb") as output:
         while True:
             chunk = file_obj.read(1024 * 256)
             if not chunk:
@@ -193,20 +223,153 @@ def save_upload(field):
             if total > MAX_UPLOAD_BYTES:
                 output.close()
                 try:
-                    os.remove(path)
+                    os.remove(temp_path)
                 except OSError:
                     pass
                 raise ValueError(f"File is too large. Limit is {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.")
+            digest.update(chunk)
             output.write(chunk)
     if total <= 0:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
         raise ValueError("Uploaded file is empty")
+    sha256 = digest.hexdigest()
+    original_safe_name = safe_upload_name(original_name, content_type).split("-", 2)[-1]
+    file_name = f"{sha256[:20]}-{original_safe_name}"
+    path = os.path.join(UPLOAD_DIR, file_name)
+    if os.path.exists(path):
+        os.remove(temp_path)
+    else:
+        os.replace(temp_path, path)
     return {
         "fileName": file_name,
         "originalName": original_name,
         "contentType": content_type,
         "size": total,
         "path": path,
+        "sha256": sha256,
     }
+
+
+def utc_timestamp():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def _load_material_records_unlocked():
+    if not os.path.exists(MATERIAL_LIBRARY_FILE):
+        return []
+    try:
+        with open(MATERIAL_LIBRARY_FILE, "r", encoding="utf-8") as handle:
+            records = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(records, list):
+        return []
+    return [item for item in records if isinstance(item, dict)]
+
+
+def _save_material_records_unlocked(records):
+    os.makedirs(DATA_ROOT, exist_ok=True)
+    temp_path = MATERIAL_LIBRARY_FILE + ".tmp"
+    with open(temp_path, "w", encoding="utf-8") as handle:
+        json.dump(records, handle, ensure_ascii=False, indent=2)
+    os.replace(temp_path, MATERIAL_LIBRARY_FILE)
+
+
+def public_material_record(record, base_url=""):
+    file_name = str(record.get("fileName") or "").strip()
+    relative_url = f"/uploads/{urllib.parse.quote(file_name)}" if file_name else ""
+    return {
+        "id": str(record.get("id") or "").strip(),
+        "url": (str(base_url).rstrip("/") + relative_url) if base_url and relative_url else relative_url,
+        "fileName": file_name,
+        "originalName": str(record.get("originalName") or "").strip(),
+        "contentType": str(record.get("contentType") or "").strip(),
+        "size": int(record.get("size") or 0),
+        "sha256": str(record.get("sha256") or "").strip(),
+        "createdAt": str(record.get("createdAt") or "").strip(),
+        "updatedAt": str(record.get("updatedAt") or "").strip(),
+        "assetId": str(record.get("assetId") or "").strip(),
+        "assetUri": str(record.get("assetUri") or "").strip(),
+        "assetStatus": str(record.get("assetStatus") or "Local").strip() or "Local",
+        "assetGroupId": str(record.get("assetGroupId") or "").strip(),
+        "assetProject": str(record.get("assetProject") or "").strip(),
+        "assetError": str(record.get("assetError") or "").strip(),
+        "submittedAt": str(record.get("submittedAt") or "").strip(),
+    }
+
+
+def list_material_records(base_url=""):
+    with MATERIAL_LIBRARY_LOCK:
+        records = _load_material_records_unlocked()
+        visible = []
+        changed = False
+        for record in records:
+            file_name = str(record.get("fileName") or "").strip()
+            if not file_name or not os.path.isfile(os.path.join(UPLOAD_DIR, file_name)):
+                changed = True
+                continue
+            visible.append(record)
+        visible.sort(key=lambda item: str(item.get("createdAt") or ""), reverse=True)
+        if changed:
+            _save_material_records_unlocked(visible)
+        return [public_material_record(item, base_url) for item in visible]
+
+
+def upsert_material_record(saved, base_url=""):
+    now = utc_timestamp()
+    with MATERIAL_LIBRARY_LOCK:
+        records = _load_material_records_unlocked()
+        record = None
+        for item in records:
+            if str(item.get("sha256") or "") == str(saved.get("sha256") or ""):
+                record = item
+                break
+        if record is None:
+            record = {
+                "id": uuid.uuid4().hex,
+                "createdAt": now,
+                "assetStatus": "Local",
+            }
+            records.append(record)
+        record.update(
+            {
+                "fileName": saved["fileName"],
+                "originalName": saved["originalName"],
+                "contentType": saved["contentType"],
+                "size": saved["size"],
+                "sha256": saved["sha256"],
+                "updatedAt": now,
+            }
+        )
+        records.sort(key=lambda item: str(item.get("createdAt") or ""), reverse=True)
+        _save_material_records_unlocked(records)
+        return public_material_record(record, base_url)
+
+
+def get_material_record(material_id):
+    normalized_id = str(material_id or "").strip()
+    with MATERIAL_LIBRARY_LOCK:
+        for record in _load_material_records_unlocked():
+            if str(record.get("id") or "").strip() == normalized_id:
+                return dict(record)
+    return None
+
+
+def update_material_record(material_id, values, base_url=""):
+    normalized_id = str(material_id or "").strip()
+    with MATERIAL_LIBRARY_LOCK:
+        records = _load_material_records_unlocked()
+        for record in records:
+            if str(record.get("id") or "").strip() != normalized_id:
+                continue
+            record.update(values)
+            record["updatedAt"] = utc_timestamp()
+            _save_material_records_unlocked(records)
+            return public_material_record(record, base_url)
+    return None
 
 
 def read_json_body(handler):
@@ -256,6 +419,102 @@ def request_json(method, url, api_key, payload=None, timeout=45):
         raise RuntimeError(f"Network error: {exc.reason}") from exc
 
 
+def _sha256_hex(value):
+    return hashlib.sha256(value).hexdigest()
+
+
+def _hmac_sha256(key, value):
+    return hmac.new(key, value.encode("utf-8"), hashlib.sha256).digest()
+
+
+def request_byteplus_asset_api(action, payload=None, timeout=45):
+    access_key = get_secret(BYTEPLUS_ACCESS_KEY_NAMES)
+    secret_key = get_secret(BYTEPLUS_SECRET_KEY_NAMES)
+    if not access_key or not secret_key:
+        raise PermissionError(
+            "Assets API требует AK/SK. Добавьте BYTEPLUS_ACCESS_KEY_ID и "
+            f"BYTEPLUS_SECRET_ACCESS_KEY в Railway env или в {TOKEN_FILE}."
+        )
+
+    body = json.dumps(payload or {}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    parsed = urllib.parse.urlparse(BYTEPLUS_ASSET_API_BASE_URL)
+    host = parsed.netloc
+    query = urllib.parse.urlencode({"Action": action, "Version": "2024-01-01"})
+    request_date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    short_date = request_date[:8]
+    payload_hash = _sha256_hex(body)
+    signed_headers = "content-type;host;x-content-sha256;x-date"
+    canonical_headers = (
+        "content-type:application/json\n"
+        f"host:{host}\n"
+        f"x-content-sha256:{payload_hash}\n"
+        f"x-date:{request_date}\n"
+    )
+    canonical_request = "\n".join(
+        ["POST", "/", query, canonical_headers, signed_headers, payload_hash]
+    )
+    credential_scope = f"{short_date}/{BYTEPLUS_ASSET_REGION}/ark/request"
+    string_to_sign = "\n".join(
+        [
+            "HMAC-SHA256",
+            request_date,
+            credential_scope,
+            _sha256_hex(canonical_request.encode("utf-8")),
+        ]
+    )
+    key_date = _hmac_sha256(secret_key.encode("utf-8"), short_date)
+    key_region = _hmac_sha256(key_date, BYTEPLUS_ASSET_REGION)
+    key_service = _hmac_sha256(key_region, "ark")
+    signing_key = _hmac_sha256(key_service, "request")
+    signature = hmac.new(
+        signing_key,
+        string_to_sign.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    authorization = (
+        f"HMAC-SHA256 Credential={access_key}/{credential_scope}, "
+        f"SignedHeaders={signed_headers}, Signature={signature}"
+    )
+    url = f"{BYTEPLUS_ASSET_API_BASE_URL}/?{query}"
+    headers = {
+        "Authorization": authorization,
+        "Content-Type": "application/json",
+        "Host": host,
+        "X-Content-Sha256": payload_hash,
+        "X-Date": request_date,
+    }
+    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode("utf-8")
+            response_payload = json.loads(raw) if raw else {}
+            return response.status, response_payload
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            response_payload = json.loads(raw)
+        except json.JSONDecodeError:
+            response_payload = {"message": raw or exc.reason}
+        return exc.code, response_payload
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Assets API network error: {exc.reason}") from exc
+
+
+def unwrap_byteplus_asset_response(status_code, payload):
+    metadata = payload.get("ResponseMetadata") if isinstance(payload, dict) else None
+    metadata_error = metadata.get("Error") if isinstance(metadata, dict) else None
+    if status_code >= 400 or metadata_error:
+        message = provider_error_message(payload) or f"Assets API returned HTTP {status_code}"
+        raise RuntimeError(message)
+    result = payload.get("Result") if isinstance(payload, dict) else None
+    return result if isinstance(result, dict) else payload
+
+
+def call_byteplus_asset_api(action, payload=None, timeout=45):
+    status_code, response_payload = request_byteplus_asset_api(action, payload, timeout)
+    return unwrap_byteplus_asset_response(status_code, response_payload)
+
+
 def split_urls(value):
     if isinstance(value, list):
         items = value
@@ -276,7 +535,7 @@ def walk_json_values(value):
 
 def remote_image_as_data_url(url):
     normalized = str(url or "").strip()
-    if not normalized or normalized.startswith("data:"):
+    if not normalized or normalized.startswith(("data:", "asset://")):
         return normalized
     request = urllib.request.Request(
         normalized,
@@ -601,6 +860,9 @@ class SeedanceHandler(BaseHTTPRequestHandler):
         if path == "/app.js":
             text_response(self, 200, JS, "application/javascript; charset=utf-8")
             return
+        if path == "/assets/callback":
+            text_response(self, 200, ASSET_CALLBACK_HTML)
+            return
         if path.startswith("/uploads/"):
             file_name = urllib.parse.unquote(path.removeprefix("/uploads/"))
             if "/" in file_name or "\\" in file_name or not file_name:
@@ -632,11 +894,31 @@ class SeedanceHandler(BaseHTTPRequestHandler):
                         "sizes": ["1K", "2K", "4K", "1024x1024", "1536x1024", "1024x1536", "2048x2048"],
                         "outputFormats": ["png", "jpeg"],
                     },
+                    "assets": {
+                        "enabled": bool(
+                            get_secret(BYTEPLUS_ACCESS_KEY_NAMES)
+                            and get_secret(BYTEPLUS_SECRET_KEY_NAMES)
+                        ),
+                        "projectName": BYTEPLUS_ASSET_PROJECT,
+                        "region": BYTEPLUS_ASSET_REGION,
+                    },
                 },
             )
             return
         if path == "/api/status":
             self.handle_status(params)
+            return
+        if path == "/api/materials":
+            json_response(self, 200, {"materials": list_material_records(public_base_url(self))})
+            return
+        if path == "/api/materials/status":
+            self.handle_material_status(params)
+            return
+        if path == "/api/assets":
+            self.handle_list_assets(params)
+            return
+        if path == "/api/assets/status":
+            self.handle_asset_status(params)
             return
         json_response(self, 404, {"error": "Not found"})
 
@@ -649,6 +931,18 @@ class SeedanceHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/upload-reference":
             self.handle_upload_reference()
+            return
+        if self.path == "/api/materials/submit":
+            self.handle_submit_material()
+            return
+        if self.path == "/api/assets/verification-session":
+            self.handle_asset_verification_session()
+            return
+        if self.path == "/api/assets/verification-result":
+            self.handle_asset_verification_result()
+            return
+        if self.path == "/api/assets/create":
+            self.handle_create_asset()
             return
         json_response(self, 404, {"error": "Not found"})
 
@@ -673,14 +967,15 @@ class SeedanceHandler(BaseHTTPRequestHandler):
             base = public_base_url(self)
             for field in fields:
                 saved = save_upload(field)
-                url = f"{base}/uploads/{urllib.parse.quote(saved['fileName'])}"
+                material = upsert_material_record(saved, base)
                 uploads.append(
                     {
-                        "url": url,
+                        "url": material["url"],
                         "fileName": saved["fileName"],
                         "originalName": saved["originalName"],
                         "contentType": saved["contentType"],
                         "size": saved["size"],
+                        "material": material,
                     }
                 )
             if not uploads:
@@ -690,6 +985,247 @@ class SeedanceHandler(BaseHTTPRequestHandler):
             json_response(self, 400, {"error": str(exc)})
         except OSError as exc:
             json_response(self, 500, {"error": str(exc)})
+
+    def handle_submit_material(self):
+        try:
+            data = read_json_body(self)
+            material_id = str(data.get("materialId") or data.get("id") or "").strip()
+            group_id = str(data.get("groupId") or "").strip()
+            project_name = str(data.get("projectName") or BYTEPLUS_ASSET_PROJECT).strip()
+            if not material_id:
+                raise ValueError("materialId is required")
+            if not group_id:
+                raise ValueError("groupId is required")
+            record = get_material_record(material_id)
+            if not record:
+                raise ValueError("material not found")
+            existing_status = str(record.get("assetStatus") or "").strip()
+            existing_asset_id = str(record.get("assetId") or "").strip()
+            if existing_asset_id and existing_status in {"Processing", "Active"}:
+                json_response(self, 200, public_material_record(record, public_base_url(self)))
+                return
+            content_type = str(record.get("contentType") or "").lower()
+            asset_type = (
+                "Video"
+                if content_type.startswith("video/")
+                else "Audio"
+                if content_type.startswith("audio/")
+                else "Image"
+            )
+            file_name = str(record.get("fileName") or "").strip()
+            asset_url = f"{public_base_url(self)}/uploads/{urllib.parse.quote(file_name)}"
+            payload = {
+                "GroupId": group_id,
+                "URL": asset_url,
+                "AssetType": asset_type,
+                "ProjectName": project_name,
+            }
+            name = str(data.get("name") or record.get("originalName") or "").strip()
+            if name:
+                payload["Name"] = name
+            result = call_byteplus_asset_api("CreateAsset", payload, timeout=120)
+            asset_id = str(result.get("Id") or result.get("id") or "").strip()
+            if not asset_id:
+                raise RuntimeError("BytePlus did not return an Asset ID")
+            material = update_material_record(
+                material_id,
+                {
+                    "assetId": asset_id,
+                    "assetUri": f"asset://{asset_id}",
+                    "assetStatus": "Processing",
+                    "assetGroupId": group_id,
+                    "assetProject": project_name,
+                    "assetError": "",
+                    "submittedAt": utc_timestamp(),
+                },
+                public_base_url(self),
+            )
+            json_response(self, 200, material)
+        except PermissionError as exc:
+            json_response(self, 401, {"error": str(exc)})
+        except (ValueError, json.JSONDecodeError) as exc:
+            json_response(self, 400, {"error": str(exc)})
+        except RuntimeError as exc:
+            json_response(self, 502, {"error": str(exc)})
+
+    def handle_material_status(self, params):
+        try:
+            material_id = (params.get("materialId") or params.get("id") or [""])[0].strip()
+            if not material_id:
+                raise ValueError("materialId is required")
+            record = get_material_record(material_id)
+            if not record:
+                raise ValueError("material not found")
+            asset_id = str(record.get("assetId") or "").strip()
+            if not asset_id:
+                json_response(self, 200, public_material_record(record, public_base_url(self)))
+                return
+            project_name = str(
+                (params.get("projectName") or [record.get("assetProject") or BYTEPLUS_ASSET_PROJECT])[0]
+            ).strip()
+            result = call_byteplus_asset_api(
+                "GetAsset",
+                {"Id": asset_id, "ProjectName": project_name},
+            )
+            status = str(result.get("Status") or "Processing").strip()
+            error = provider_error_message(result) if status == "Failed" else ""
+            material = update_material_record(
+                material_id,
+                {
+                    "assetStatus": status,
+                    "assetUri": f"asset://{asset_id}" if status == "Active" else str(record.get("assetUri") or ""),
+                    "assetProject": project_name,
+                    "assetError": error,
+                },
+                public_base_url(self),
+            )
+            json_response(self, 200, material)
+        except PermissionError as exc:
+            json_response(self, 401, {"error": str(exc)})
+        except ValueError as exc:
+            json_response(self, 400, {"error": str(exc)})
+        except RuntimeError as exc:
+            json_response(self, 502, {"error": str(exc)})
+
+    def handle_asset_verification_session(self):
+        try:
+            data = read_json_body(self)
+            callback_url = str(data.get("callbackUrl") or "").strip()
+            if not callback_url.startswith(("http://", "https://")):
+                raise ValueError("callbackUrl must be an absolute HTTP(S) URL")
+            result = call_byteplus_asset_api(
+                "CreateVisualValidateSession",
+                {
+                    "CallbackURL": callback_url,
+                    "ProjectName": str(
+                        data.get("projectName") or BYTEPLUS_ASSET_PROJECT
+                    ).strip(),
+                },
+            )
+            json_response(self, 200, result)
+        except PermissionError as exc:
+            json_response(self, 401, {"error": str(exc)})
+        except (ValueError, json.JSONDecodeError) as exc:
+            json_response(self, 400, {"error": str(exc)})
+        except RuntimeError as exc:
+            json_response(self, 502, {"error": str(exc)})
+
+    def handle_asset_verification_result(self):
+        try:
+            data = read_json_body(self)
+            byted_token = str(data.get("bytedToken") or data.get("BytedToken") or "").strip()
+            if not byted_token:
+                raise ValueError("bytedToken is required")
+            result = call_byteplus_asset_api(
+                "GetVisualValidateResult",
+                {
+                    "BytedToken": byted_token,
+                    "ProjectName": str(
+                        data.get("projectName") or BYTEPLUS_ASSET_PROJECT
+                    ).strip(),
+                },
+            )
+            json_response(self, 200, result)
+        except PermissionError as exc:
+            json_response(self, 401, {"error": str(exc)})
+        except (ValueError, json.JSONDecodeError) as exc:
+            json_response(self, 400, {"error": str(exc)})
+        except RuntimeError as exc:
+            json_response(self, 502, {"error": str(exc)})
+
+    def handle_create_asset(self):
+        try:
+            data = read_json_body(self)
+            group_id = str(data.get("groupId") or "").strip()
+            asset_url = str(data.get("url") or "").strip()
+            asset_type = str(data.get("assetType") or "Image").strip().title()
+            if not group_id:
+                raise ValueError("groupId is required")
+            if not asset_url.startswith(("http://", "https://")):
+                raise ValueError("url must be an absolute public HTTP(S) URL")
+            if asset_type not in {"Image", "Video", "Audio"}:
+                raise ValueError("assetType must be Image, Video, or Audio")
+            payload = {
+                "GroupId": group_id,
+                "URL": asset_url,
+                "AssetType": asset_type,
+                "ProjectName": str(
+                    data.get("projectName") or BYTEPLUS_ASSET_PROJECT
+                ).strip(),
+            }
+            name = str(data.get("name") or "").strip()
+            if name:
+                payload["Name"] = name
+            result = call_byteplus_asset_api("CreateAsset", payload, timeout=120)
+            json_response(self, 200, result)
+        except PermissionError as exc:
+            json_response(self, 401, {"error": str(exc)})
+        except (ValueError, json.JSONDecodeError) as exc:
+            json_response(self, 400, {"error": str(exc)})
+        except RuntimeError as exc:
+            json_response(self, 502, {"error": str(exc)})
+
+    def handle_list_assets(self, params):
+        try:
+            project_name = (
+                params.get("projectName") or [BYTEPLUS_ASSET_PROJECT]
+            )[0].strip()
+            group_id = (params.get("groupId") or [""])[0].strip()
+            groups_payload = {
+                "Filter": {"GroupType": "LivenessFace"},
+                "PageNumber": 1,
+                "PageSize": 100,
+                "ProjectName": project_name,
+            }
+            groups = call_byteplus_asset_api("ListAssetGroups", groups_payload)
+            assets_filter = {"GroupType": "LivenessFace"}
+            if group_id:
+                assets_filter["GroupIds"] = [group_id]
+            assets = call_byteplus_asset_api(
+                "ListAssets",
+                {
+                    "Filter": assets_filter,
+                    "PageNumber": 1,
+                    "PageSize": 100,
+                    "SortBy": "CreateTime",
+                    "SortOrder": "Desc",
+                    "ProjectName": project_name,
+                },
+            )
+            json_response(
+                self,
+                200,
+                {
+                    "groups": groups.get("Items") or [],
+                    "assets": assets.get("Items") or [],
+                    "groupCount": groups.get("TotalCount") or 0,
+                    "assetCount": assets.get("TotalCount") or 0,
+                },
+            )
+        except PermissionError as exc:
+            json_response(self, 401, {"error": str(exc)})
+        except RuntimeError as exc:
+            json_response(self, 502, {"error": str(exc)})
+
+    def handle_asset_status(self, params):
+        try:
+            asset_id = (params.get("assetId") or params.get("id") or [""])[0].strip()
+            project_name = (
+                params.get("projectName") or [BYTEPLUS_ASSET_PROJECT]
+            )[0].strip()
+            if not asset_id:
+                raise ValueError("assetId is required")
+            result = call_byteplus_asset_api(
+                "GetAsset",
+                {"Id": asset_id, "ProjectName": project_name},
+            )
+            json_response(self, 200, result)
+        except PermissionError as exc:
+            json_response(self, 401, {"error": str(exc)})
+        except ValueError as exc:
+            json_response(self, 400, {"error": str(exc)})
+        except RuntimeError as exc:
+            json_response(self, 502, {"error": str(exc)})
 
     def handle_generate(self):
         try:
@@ -799,6 +1335,39 @@ class SeedanceHandler(BaseHTTPRequestHandler):
         except RuntimeError as exc:
             json_response(self, 502, {"error": str(exc)})
 
+ASSET_CALLBACK_HTML = """<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BytePlus verification</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #07070f; color: #e8e8f0; font: 16px system-ui, sans-serif; }
+    main { max-width: 520px; margin: 24px; padding: 28px; border: 1px solid rgba(255,255,255,.1); border-radius: 14px; background: #0f0f1a; }
+    p { color: #a1a1b5; line-height: 1.55; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1 id="title">Проверка завершена</h1>
+    <p id="message">Результат передан в Seedance Studio. Это окно можно закрыть.</p>
+  </main>
+  <script>
+    const params = Object.fromEntries(new URLSearchParams(location.search).entries());
+    const ok = params.resultCode === "10000";
+    document.querySelector("#title").textContent = ok ? "Личность подтверждена" : "Проверка не пройдена";
+    document.querySelector("#message").textContent = ok
+      ? "Получаем приватную группу ассетов. Вернитесь в Seedance Studio."
+      : `BytePlus вернул код ${params.resultCode || "unknown"}. Запустите новую проверку.`;
+    if (window.opener) {
+      window.opener.postMessage({ type: "byteplus-asset-verification", params }, location.origin);
+      if (ok) setTimeout(() => window.close(), 1400);
+    }
+  </script>
+</body>
+</html>
+"""
+
 
 HTML = """<!doctype html>
 <html lang="ru">
@@ -848,6 +1417,58 @@ HTML = """<!doctype html>
           <input name="imageUrls" type="hidden">
           <input name="videoUrls" type="hidden">
           <input name="audioUrls" type="hidden">
+        </section>
+
+        <section class="form-section asset-library video-setting">
+          <div class="section-heading">
+            <div>
+              <h2>Materials & private assets</h2>
+              <p>Save once, send to BytePlus review, then reuse by Asset ID</p>
+            </div>
+            <span class="status-pill idle" id="assetApiStatus">checking</span>
+          </div>
+          <div class="grid two">
+            <label>BytePlus project
+              <input id="assetProject" value="default" autocomplete="off">
+            </label>
+            <label>Portrait group
+              <select id="assetGroupSelect">
+                <option value="">No groups loaded</option>
+              </select>
+            </label>
+          </div>
+          <div class="asset-actions">
+            <button type="button" class="secondary" id="startVerificationBtn">Verify a person</button>
+            <button type="button" class="secondary" id="refreshAssetsBtn">Refresh library</button>
+          </div>
+          <p class="asset-help" id="assetHelp">Real-person verification creates one private group per person.</p>
+          <div class="asset-upload-row material-upload-row">
+            <label>Upload photo or video
+              <input id="assetUpload" type="file" accept="image/*,video/*,audio/*">
+            </label>
+            <button type="button" id="createAssetBtn">Save material</button>
+          </div>
+          <div class="asset-id-row">
+            <label>Reuse by Asset ID
+              <input id="manualAssetInput" placeholder="asset-... or asset://asset-..." autocomplete="off" spellcheck="false">
+            </label>
+            <label>Type
+              <select id="manualAssetType">
+                <option value="Image">Image</option>
+                <option value="Video">Video</option>
+                <option value="Audio">Audio</option>
+              </select>
+            </label>
+            <button type="button" class="secondary" id="addAssetByIdBtn">Use ID</button>
+          </div>
+          <h3 class="asset-subheading">Uploaded materials</h3>
+          <div class="material-list" id="materialList">
+            <div class="empty asset-empty">No uploaded materials yet.</div>
+          </div>
+          <h3 class="asset-subheading">BytePlus private library</h3>
+          <div class="private-asset-list" id="privateAssetList">
+            <div class="empty asset-empty">No private assets loaded.</div>
+          </div>
         </section>
 
         <section class="form-section settings-section">
@@ -932,6 +1553,7 @@ CSS = """
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body {
   margin: 0;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -1389,6 +2011,153 @@ input[type="range"]::-moz-range-thumb {
   background: rgba(180, 35, 24, .08);
 }
 
+.section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.asset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.asset-actions button {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.asset-help {
+  min-height: 18px;
+  color: var(--muted);
+}
+
+.asset-help.error { color: var(--bad); }
+.asset-help.done { color: var(--good); }
+
+.asset-upload-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.asset-upload-row button {
+  grid-column: 1 / -1;
+}
+
+.material-upload-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.material-upload-row button {
+  grid-column: auto;
+}
+
+.asset-id-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.asset-subheading {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.private-asset-list,
+.material-list {
+  display: grid;
+  gap: 8px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.private-asset-card {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 70px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--field);
+}
+
+.private-asset-preview {
+  width: 54px;
+  height: 54px;
+  border-radius: 6px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--field-2);
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.private-asset-preview img,
+.private-asset-preview video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.private-asset-meta {
+  min-width: 0;
+}
+
+.private-asset-meta strong,
+.private-asset-meta small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.private-asset-meta strong { font-size: 12px; }
+.private-asset-meta small {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.private-asset-card button {
+  min-height: 34px;
+  padding: 0 11px;
+  font-size: 11px;
+}
+
+.asset-card-actions {
+  display: grid;
+  gap: 6px;
+  min-width: 96px;
+}
+
+.asset-card-actions button {
+  min-height: 30px;
+}
+
+.private-asset-card button.added {
+  color: var(--good);
+  border-color: rgba(52, 211, 153, .3);
+  background: rgba(52, 211, 153, .08);
+}
+
+.asset-empty {
+  min-height: 70px;
+}
+
 .actions {
   display: flex;
   gap: 12px;
@@ -1526,6 +2295,9 @@ pre {
 
 @media (max-width: 620px) {
   .two, .four { grid-template-columns: 1fr; }
+  .material-upload-row, .asset-id-row { grid-template-columns: 1fr; }
+  .private-asset-card { grid-template-columns: 54px minmax(0, 1fr); }
+  .asset-card-actions { grid-column: 1 / -1; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); }
   .upload-grid, .image-reference-list, .reference-preview { grid-template-columns: 1fr; }
   .topbar, .result-head { display: grid; }
   .actions { display: grid; }
@@ -1541,7 +2313,9 @@ const state = {
   provider: "byteplus",
   providerConfig: null,
   baseUrl: "",
-  pollTimer: null
+  pollTimer: null,
+  privateAssets: [],
+  materials: []
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -1565,6 +2339,19 @@ const promptEditor = $("#promptEditor");
 const referenceUpload = $("#referenceUpload");
 const imageReferenceList = $("#imageReferenceList");
 const referencePreview = $("#referencePreview");
+const assetApiStatus = $("#assetApiStatus");
+const assetProject = $("#assetProject");
+const assetGroupSelect = $("#assetGroupSelect");
+const startVerificationBtn = $("#startVerificationBtn");
+const refreshAssetsBtn = $("#refreshAssetsBtn");
+const assetHelp = $("#assetHelp");
+const assetUpload = $("#assetUpload");
+const createAssetBtn = $("#createAssetBtn");
+const manualAssetInput = $("#manualAssetInput");
+const manualAssetType = $("#manualAssetType");
+const addAssetByIdBtn = $("#addAssetByIdBtn");
+const materialList = $("#materialList");
+const privateAssetList = $("#privateAssetList");
 const modeButtons = document.querySelectorAll(".mode-btn");
 const videoSettings = document.querySelectorAll(".video-setting");
 const imageSettings = document.querySelectorAll(".image-settings");
@@ -1665,6 +2452,505 @@ function collectPayload() {
 function setUploadStatus(message, kind = "") {
   uploadStatus.textContent = message;
   uploadStatus.className = `upload-status ${kind}`;
+}
+
+function setAssetStatus(message, kind = "idle") {
+  assetApiStatus.textContent = message;
+  assetApiStatus.className = `status-pill ${kind}`;
+}
+
+function setAssetHelp(message, kind = "") {
+  assetHelp.textContent = message;
+  assetHelp.className = `asset-help ${kind}`;
+}
+
+function privateAssetUri(asset) {
+  const raw = asset && (asset.assetUri || asset.AssetUri || asset.Id || asset.assetId);
+  if (!raw) return "";
+  return String(raw).startsWith("asset://") ? String(raw) : `asset://${raw}`;
+}
+
+function privateAssetIsAdded(asset) {
+  const uri = privateAssetUri(asset);
+  return imageRefs.some((ref) => ref.url === uri) || mediaRefs.some((ref) => ref.url === uri);
+}
+
+function addPrivateAssetReference(asset) {
+  const uri = privateAssetUri(asset);
+  if (!uri || privateAssetIsAdded(asset)) return;
+  const type = String(asset.AssetType || "Image").toLowerCase();
+  let referenceIndex = 1;
+  const common = {
+    url: uri,
+    previewUrl: asset.URL || "",
+    name: asset.Name || asset.Id,
+    source: "private-asset"
+  };
+  if (type === "image") {
+    addImageRef(common);
+    referenceIndex = imageRefs.length;
+  } else {
+    mediaRefs.push({
+      id: `media-${++mediaRefCounter}`,
+      kind: type === "audio" ? "audio" : "video",
+      file: null,
+      ...common
+    });
+    syncMediaUrlsFields();
+    renderReferencePreview();
+    referenceIndex = mediaRefs.filter((ref) => ref.kind === (type === "audio" ? "audio" : "video")).length;
+  }
+  setUploadStatus(`${asset.AssetType || "Asset"} добавлен как ${uri}. Укажите его в prompt как ${type} ${referenceIndex}.`);
+  renderPrivateAssets();
+  renderMaterials();
+}
+
+function normalizeAssetUri(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) throw new Error("Введите BytePlus Asset ID.");
+  const assetId = normalized.toLowerCase().startsWith("asset://") ? normalized.slice(8).trim() : normalized;
+  if (!assetId || !/^[A-Za-z0-9._:-]+$/.test(assetId)) {
+    throw new Error("Некорректный Asset ID.");
+  }
+  return `asset://${assetId}`;
+}
+
+async function copyAssetId(assetId) {
+  const normalized = String(assetId || "").replace(/^asset:\/\//i, "").trim();
+  if (!normalized) return;
+  try {
+    await navigator.clipboard.writeText(normalized);
+    setAssetHelp(`Asset ID скопирован: ${normalized}`, "done");
+  } catch {
+    manualAssetInput.value = normalized;
+    manualAssetInput.focus();
+    manualAssetInput.select();
+    setAssetHelp("ID помещён в поле. Скопируйте его вручную.");
+  }
+}
+
+function addManualAssetReference() {
+  try {
+    const uri = normalizeAssetUri(manualAssetInput.value);
+    const assetId = uri.slice(8);
+    const knownAsset = state.privateAssets.find((item) => String(item.Id || "") === assetId);
+    addPrivateAssetReference(knownAsset || {
+      Id: assetId,
+      AssetType: manualAssetType.value || "Image",
+      Name: assetId,
+      Status: "Active"
+    });
+    manualAssetInput.value = "";
+  } catch (error) {
+    setAssetHelp(error.message, "error");
+  }
+}
+
+function materialType(material) {
+  const contentType = String(material.contentType || "").toLowerCase();
+  if (contentType.startsWith("video/")) return "Video";
+  if (contentType.startsWith("audio/")) return "Audio";
+  return "Image";
+}
+
+function upsertMaterial(material) {
+  if (!material || !material.id) return;
+  const index = state.materials.findIndex((item) => item.id === material.id);
+  if (index >= 0) state.materials[index] = material;
+  else state.materials.unshift(material);
+}
+
+function useMaterialFile(material) {
+  const type = materialType(material).toLowerCase();
+  const common = {
+    url: material.url,
+    previewUrl: material.url,
+    name: material.originalName || material.fileName,
+    source: "material-library"
+  };
+  if (type === "image") {
+    addImageRef(common);
+  } else if (!mediaRefs.some((item) => item.url === material.url)) {
+    mediaRefs.push({
+      id: `media-${++mediaRefCounter}`,
+      kind: type === "audio" ? "audio" : "video",
+      file: null,
+      ...common
+    });
+    syncMediaUrlsFields();
+    renderReferencePreview();
+  }
+  setUploadStatus(`${material.originalName || "Material"} добавлен из сохранённой библиотеки.`);
+}
+
+function useMaterialAsset(material) {
+  if (String(material.assetStatus || "").toLowerCase() !== "active" || !material.assetId) return;
+  addPrivateAssetReference({
+    Id: material.assetId,
+    AssetType: materialType(material),
+    Name: material.originalName || material.assetId,
+    URL: material.url,
+    Status: "Active"
+  });
+}
+
+async function loadMaterials() {
+  try {
+    const data = await apiFetch("/api/materials");
+    state.materials = Array.isArray(data.materials) ? data.materials : [];
+    renderMaterials();
+  } catch (error) {
+    setAssetHelp(error.message, "error");
+  }
+}
+
+async function refreshMaterialStatus(material, poll = false) {
+  const attempts = poll ? 36 : 1;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const params = new URLSearchParams({
+      materialId: material.id,
+      projectName: assetProject.value.trim() || "default"
+    });
+    const updated = await apiFetch(`/api/materials/status?${params.toString()}`);
+    upsertMaterial(updated);
+    renderMaterials();
+    const status = String(updated.assetStatus || "Local");
+    setAssetStatus(status.toLowerCase(), status === "Active" ? "done" : status === "Failed" ? "error" : "idle");
+    setAssetHelp(
+      status === "Active"
+        ? `Материал прошёл проверку. Asset ID: ${updated.assetId}`
+        : status === "Failed"
+        ? updated.assetError || "BytePlus отклонил материал."
+        : `Материал ${updated.originalName}: ${status}.`,
+      status === "Active" ? "done" : status === "Failed" ? "error" : ""
+    );
+    if (!poll || status === "Active" || status === "Failed") return updated;
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+  }
+  throw new Error("Материал всё ещё обрабатывается. Нажмите Refresh позже.");
+}
+
+async function submitMaterialForReview(material) {
+  if (!state.config.assets.enabled) {
+    setAssetHelp("Для отправки на проверку добавьте BytePlus AK/SK.", "error");
+    return;
+  }
+  if (!assetGroupSelect.value) {
+    setAssetHelp("Сначала подтвердите личность и выберите portrait group.", "error");
+    return;
+  }
+  setAssetStatus("submitting");
+  setAssetHelp(`Отправляю ${material.originalName} на проверку BytePlus...`);
+  try {
+    const submitted = await apiFetch("/api/materials/submit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        materialId: material.id,
+        groupId: assetGroupSelect.value,
+        projectName: assetProject.value.trim() || "default",
+        name: material.originalName
+      })
+    });
+    upsertMaterial(submitted);
+    renderMaterials();
+    await refreshMaterialStatus(submitted, true);
+    await loadPrivateAssets(true);
+  } catch (error) {
+    setAssetStatus("error", "error");
+    setAssetHelp(error.message, "error");
+  }
+}
+
+function renderMaterials() {
+  materialList.replaceChildren();
+  if (!state.materials.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty asset-empty";
+    empty.textContent = "Загруженных материалов пока нет.";
+    materialList.appendChild(empty);
+    return;
+  }
+  state.materials.forEach((material) => {
+    const card = document.createElement("article");
+    card.className = "private-asset-card material-card";
+    const preview = document.createElement("div");
+    preview.className = "private-asset-preview";
+    const type = materialType(material);
+    if (type === "Image") {
+      const img = document.createElement("img");
+      img.src = material.url;
+      img.alt = material.originalName || "Material";
+      preview.appendChild(img);
+    } else if (type === "Video") {
+      const video = document.createElement("video");
+      video.src = material.url;
+      video.muted = true;
+      video.playsInline = true;
+      preview.appendChild(video);
+    } else {
+      preview.textContent = type;
+    }
+    const meta = document.createElement("div");
+    meta.className = "private-asset-meta";
+    const title = document.createElement("strong");
+    title.textContent = material.originalName || material.fileName || "Material";
+    const detail = document.createElement("small");
+    detail.textContent = `${type} · ${material.assetStatus || "Local"}${material.assetId ? ` · ${material.assetId}` : ""}`;
+    meta.append(title, detail);
+    const actions = document.createElement("div");
+    actions.className = "asset-card-actions";
+    const useFileButton = document.createElement("button");
+    useFileButton.type = "button";
+    useFileButton.className = "secondary";
+    useFileButton.textContent = "Use file";
+    useFileButton.addEventListener("click", () => useMaterialFile(material));
+    actions.appendChild(useFileButton);
+    const status = String(material.assetStatus || "Local");
+    if (status === "Active" && material.assetId) {
+      const useAssetButton = document.createElement("button");
+      useAssetButton.type = "button";
+      useAssetButton.textContent = "Use asset";
+      useAssetButton.addEventListener("click", () => useMaterialAsset(material));
+      const copyButton = document.createElement("button");
+      copyButton.type = "button";
+      copyButton.className = "secondary";
+      copyButton.textContent = "Copy ID";
+      copyButton.addEventListener("click", () => copyAssetId(material.assetId));
+      actions.append(useAssetButton, copyButton);
+    } else if (status === "Processing") {
+      const refreshButton = document.createElement("button");
+      refreshButton.type = "button";
+      refreshButton.className = "secondary";
+      refreshButton.textContent = "Refresh check";
+      refreshButton.addEventListener("click", () => refreshMaterialStatus(material).catch((error) => setAssetHelp(error.message, "error")));
+      actions.appendChild(refreshButton);
+    } else {
+      const reviewButton = document.createElement("button");
+      reviewButton.type = "button";
+      reviewButton.textContent = status === "Failed" ? "Send again" : "Send to check";
+      reviewButton.disabled = !state.config.assets.enabled;
+      reviewButton.addEventListener("click", () => submitMaterialForReview(material));
+      actions.appendChild(reviewButton);
+    }
+    card.append(preview, meta, actions);
+    materialList.appendChild(card);
+  });
+}
+
+function renderPrivateAssets() {
+  privateAssetList.replaceChildren();
+  const assets = state.privateAssets || [];
+  if (!assets.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty asset-empty";
+    empty.textContent = "В выбранной группе пока нет ассетов.";
+    privateAssetList.appendChild(empty);
+    return;
+  }
+  assets.forEach((asset) => {
+    const card = document.createElement("article");
+    card.className = "private-asset-card";
+    const preview = document.createElement("div");
+    preview.className = "private-asset-preview";
+    const type = String(asset.AssetType || "Asset");
+    if (asset.URL && type.toLowerCase() === "image") {
+      const img = document.createElement("img");
+      img.src = asset.URL;
+      img.alt = asset.Name || asset.Id;
+      preview.appendChild(img);
+    } else if (asset.URL && type.toLowerCase() === "video") {
+      const video = document.createElement("video");
+      video.src = asset.URL;
+      video.muted = true;
+      preview.appendChild(video);
+    } else {
+      preview.textContent = type;
+    }
+    const meta = document.createElement("div");
+    meta.className = "private-asset-meta";
+    const title = document.createElement("strong");
+    title.textContent = asset.Name || asset.Id || "Unnamed asset";
+    const detail = document.createElement("small");
+    detail.textContent = `${type} · ${asset.Status || "Unknown"} · ${asset.Id || ""}`;
+    meta.append(title, detail);
+    const actions = document.createElement("div");
+    actions.className = "asset-card-actions";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary";
+    const active = String(asset.Status || "").toLowerCase() === "active";
+    const added = privateAssetIsAdded(asset);
+    button.disabled = !active || added;
+    button.textContent = added ? "Added" : active ? "Use" : asset.Status || "Processing";
+    if (added) button.classList.add("added");
+    button.addEventListener("click", () => addPrivateAssetReference(asset));
+    actions.appendChild(button);
+    if (active && asset.Id) {
+      const copyButton = document.createElement("button");
+      copyButton.type = "button";
+      copyButton.className = "secondary";
+      copyButton.textContent = "Copy ID";
+      copyButton.addEventListener("click", () => copyAssetId(asset.Id));
+      actions.appendChild(copyButton);
+    }
+    card.append(preview, meta, actions);
+    privateAssetList.appendChild(card);
+  });
+}
+
+function renderAssetGroups(groups) {
+  const current = assetGroupSelect.value;
+  assetGroupSelect.replaceChildren();
+  if (!groups.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No verified groups";
+    assetGroupSelect.appendChild(option);
+    return;
+  }
+  groups.forEach((group) => {
+    const option = document.createElement("option");
+    option.value = group.Id;
+    option.textContent = group.Name || group.Title || group.Id;
+    assetGroupSelect.appendChild(option);
+  });
+  if (groups.some((group) => group.Id === current)) {
+    assetGroupSelect.value = current;
+  }
+}
+
+async function loadPrivateAssets(filterSelectedGroup = false) {
+  if (!state.config.assets.enabled) return;
+  setAssetStatus("loading");
+  const params = new URLSearchParams({
+    projectName: assetProject.value.trim() || "default"
+  });
+  if (filterSelectedGroup && assetGroupSelect.value) {
+    params.set("groupId", assetGroupSelect.value);
+  }
+  try {
+    const data = await apiFetch(`/api/assets?${params.toString()}`);
+    renderAssetGroups(Array.isArray(data.groups) ? data.groups : []);
+    state.privateAssets = Array.isArray(data.assets) ? data.assets : [];
+    renderPrivateAssets();
+    setAssetStatus("ready", "done");
+    setAssetHelp(`${data.groupCount || 0} group(s), ${data.assetCount || 0} asset(s). Only Active assets can be used.`);
+  } catch (error) {
+    setAssetStatus("error", "error");
+    setAssetHelp(error.message, "error");
+  }
+}
+
+async function startAssetVerification() {
+  const popup = window.open("", "byteplus-person-verification", "popup,width=520,height=760");
+  startVerificationBtn.disabled = true;
+  setAssetStatus("starting");
+  setAssetHelp("Создаю защищённую H5-сессию BytePlus...");
+  try {
+    const data = await apiFetch("/api/assets/verification-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        callbackUrl: `${location.origin}/assets/callback`,
+        projectName: assetProject.value.trim() || "default"
+      })
+    });
+    const h5Link = data.H5Link || data.h5Link;
+    if (!h5Link) throw new Error("BytePlus did not return H5Link");
+    const verificationUrl = new URL(h5Link);
+    verificationUrl.searchParams.set("lng", "en");
+    if (popup) {
+      popup.location.href = verificationUrl.toString();
+      popup.focus();
+    } else {
+      window.open(verificationUrl.toString(), "_blank", "noopener");
+    }
+    setAssetStatus("verify");
+    setAssetHelp("Завершите проверку личности в открывшемся окне.");
+  } catch (error) {
+    if (popup) popup.close();
+    setAssetStatus("error", "error");
+    setAssetHelp(error.message, "error");
+  } finally {
+    startVerificationBtn.disabled = false;
+  }
+}
+
+async function finishAssetVerification(params) {
+  if (params.resultCode !== "10000" || !params.bytedToken) {
+    setAssetStatus("failed", "error");
+    setAssetHelp(`Проверка не пройдена: resultCode=${params.resultCode || "unknown"}.`, "error");
+    return;
+  }
+  setAssetStatus("saving");
+  setAssetHelp("Проверка пройдена. Получаю ID приватной группы...");
+  try {
+    const data = await apiFetch("/api/assets/verification-result", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bytedToken: params.bytedToken,
+        projectName: assetProject.value.trim() || "default"
+      })
+    });
+    setAssetStatus("verified", "done");
+    setAssetHelp(`Группа ${data.GroupId || "создана"} готова.`, "done");
+    await loadPrivateAssets();
+    if (data.GroupId) assetGroupSelect.value = data.GroupId;
+  } catch (error) {
+    setAssetStatus("error", "error");
+    setAssetHelp(error.message, "error");
+  }
+}
+
+async function waitForPrivateAsset(assetId) {
+  const params = new URLSearchParams({
+    assetId,
+    projectName: assetProject.value.trim() || "default"
+  });
+  for (let attempt = 0; attempt < 36; attempt += 1) {
+    const asset = await apiFetch(`/api/assets/status?${params.toString()}`);
+    const status = String(asset.Status || "Processing");
+    setAssetStatus(status.toLowerCase(), status === "Active" ? "done" : status === "Failed" ? "error" : "idle");
+    setAssetHelp(`Asset ${assetId}: ${status}${status === "Processing" ? ". Следующая проверка через 5 секунд." : ""}`);
+    if (status === "Active" || status === "Failed") return asset;
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+  }
+  throw new Error("Asset is still processing. Use Refresh library later.");
+}
+
+async function createPrivateAsset() {
+  const file = assetUpload.files && assetUpload.files[0];
+  if (!file) {
+    setAssetHelp("Выберите image, video или audio файл.", "error");
+    return;
+  }
+  createAssetBtn.disabled = true;
+  setAssetStatus("uploading");
+  setAssetHelp("Сохраняю материал в библиотеке...");
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    const response = await fetch("/api/upload-reference", {
+      method: "POST",
+      body: formData
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || `Upload failed: HTTP ${response.status}`);
+    const uploaded = Array.isArray(payload.files) ? payload.files[0] : null;
+    if (!uploaded || !uploaded.material) throw new Error("Material record missing from upload response");
+    upsertMaterial(uploaded.material);
+    renderMaterials();
+    assetUpload.value = "";
+    setAssetStatus("saved", "done");
+    setAssetHelp("Материал сохранён. Теперь можно использовать файл или отправить его на проверку BytePlus.", "done");
+  } catch (error) {
+    setAssetStatus("error", "error");
+    setAssetHelp(error.message, "error");
+  } finally {
+    createAssetBtn.disabled = false;
+  }
 }
 
 function updateDurationSlider() {
@@ -1874,6 +3160,8 @@ function removeImageRef(id) {
   imageRefs.splice(index, 1);
   syncImageUrlsField();
   renderImageReferences();
+  renderPrivateAssets();
+  renderMaterials();
   setUploadStatus("Изображение удалено.");
 }
 
@@ -1884,6 +3172,8 @@ function removeMediaRef(id) {
   mediaRefs.splice(index, 1);
   syncMediaUrlsFields();
   renderReferencePreview();
+  renderPrivateAssets();
+  renderMaterials();
   setUploadStatus("Файл удален.");
 }
 
@@ -2009,6 +3299,10 @@ async function uploadSingleReferenceFile(file) {
   const first = Array.isArray(payload.files) ? payload.files[0] : null;
   if (!first || !first.url) {
     throw new Error("Upload failed: no URL returned");
+  }
+  if (first.material) {
+    upsertMaterial(first.material);
+    renderMaterials();
   }
   return first.url;
 }
@@ -2181,6 +3475,18 @@ async function boot() {
   state.config = await apiFetch("/api/config");
   state.provider = state.config.providers.byteplus ? "byteplus" : Object.keys(state.config.providers)[0];
   state.providerConfig = state.config.providers[state.provider];
+  assetProject.value = state.config.assets.projectName || "default";
+  const assetApiEnabled = Boolean(state.config.assets.enabled);
+  [assetProject, assetGroupSelect, startVerificationBtn, refreshAssetsBtn].forEach((control) => {
+    control.disabled = !assetApiEnabled;
+  });
+  if (assetApiEnabled) {
+    setAssetStatus("ready", "done");
+    setAssetHelp("AK/SK найдены. Загрузите библиотеку или подтвердите нового человека.");
+  } else {
+    setAssetStatus("local only", "idle");
+    setAssetHelp("Материалы можно сохранять и переиспользовать. Для отправки на проверку добавьте BytePlus AK/SK.");
+  }
   form.addEventListener("submit", submitGeneration);
   modeButtons.forEach((button) => {
     button.addEventListener("click", () => {
@@ -2196,6 +3502,22 @@ async function boot() {
     });
   });
   pollBtn.addEventListener("click", () => pollStatus(true));
+  startVerificationBtn.addEventListener("click", startAssetVerification);
+  refreshAssetsBtn.addEventListener("click", () => loadPrivateAssets(Boolean(assetGroupSelect.value)));
+  createAssetBtn.addEventListener("click", createPrivateAsset);
+  addAssetByIdBtn.addEventListener("click", addManualAssetReference);
+  manualAssetInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    addManualAssetReference();
+  });
+  assetGroupSelect.addEventListener("change", () => loadPrivateAssets(true));
+  assetProject.addEventListener("change", () => loadPrivateAssets());
+  window.addEventListener("message", (event) => {
+    if (event.origin !== location.origin) return;
+    if (!event.data || event.data.type !== "byteplus-asset-verification") return;
+    finishAssetVerification(event.data.params || {});
+  });
   if (referenceUpload) {
     const dropZone = referenceUpload.closest(".upload-tile");
     referenceUpload.addEventListener("change", () => {
@@ -2233,6 +3555,8 @@ async function boot() {
   }
   durationEl.addEventListener("input", updateDurationSlider);
   refreshProviderFields();
+  await loadMaterials();
+  if (assetApiEnabled) await loadPrivateAssets();
   pretty({ ready: true, provider: state.provider });
 }
 

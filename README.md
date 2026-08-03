@@ -9,7 +9,9 @@
 - Text-to-video через `seedanceapi.org/v2`.
 - Поддержка reAPI `doubao-seedance-2.0` variants.
 - Elements-style references через `@image1`, `@video1`, `@audio1` where provider supports them.
+- Private real-person portrait library через BytePlus Assets API: H5-проверка личности, группы, загрузка и выбор `asset://` references.
 - Upload reference image/video/audio files and serve them as public `/uploads/...` URLs.
+- Persistent material library with local IDs, review status, Asset ID copy/reuse, and SHA-256 deduplication.
 - Polling статуса видео-задачи, предпросмотр готового MP4 и синхронный предпросмотр Seedream images.
 - Чтение API ключей из `~/Desktop/tokens.txt` и переменных окружения.
 
@@ -28,6 +30,18 @@ SEEDANCE_API_KEY="your_key"
 ```env
 ARK_API_KEY="your_key"
 ```
+
+Для приватной библиотеки портретов нужен отдельный Access Key / Secret Key:
+
+```env
+BYTEPLUS_ACCESS_KEY_ID="your_ak"
+BYTEPLUS_SECRET_ACCESS_KEY="your_sk"
+BYTEPLUS_ASSET_PROJECT="default"
+```
+
+Поддерживаются также имена `BYTEPLUS_ACCESS_KEY`, `BYTEPLUS_AK`,
+`ARK_ACCESS_KEY_ID`, `BYTEPLUS_SECRET_KEY`, `BYTEPLUS_SK` и
+`ARK_SECRET_ACCESS_KEY`.
 
 Если BytePlus выдал отдельный endpoint ID, добавьте его тоже:
 
@@ -79,11 +93,19 @@ PORT=8090 python3 web_app.py
 
 Для Railway сервис слушает `0.0.0.0` и берет порт из `PORT`, поэтому дополнительная настройка bind host не нужна.
 
+Для постоянного хранения материалов на Railway подключите Volume. Сервис автоматически
+использует `RAILWAY_VOLUME_MOUNT_PATH`; локально можно указать каталог вручную:
+
+```env
+SEEDANCE_DATA_DIR="/path/to/persistent/data"
+```
+
 ## Upload reference files
 
 В блоке `Files` можно загрузить изображения, видео и аудио. Изображения можно сортировать drag-and-drop; в prompt их удобно указывать как `@image1`, `@image2`, а ссылки на изображения, вставленные прямо в prompt, автоматически подтягиваются как previews.
 
-Файлы сохраняются в `uploads/` и доступны как:
+Файлы сохраняются в `uploads/`, автоматически добавляются в `material_library.json`
+и доступны как:
 
 ```text
 https://your-railway-domain.up.railway.app/uploads/<file>
@@ -94,6 +116,39 @@ https://your-railway-domain.up.railway.app/uploads/<file>
 ```env
 MAX_UPLOAD_BYTES=104857600
 ```
+
+## Private portrait assets
+
+Интеграция рассчитана на
+[Dreamina Seedance 2.0 Advanced Creation Rights](https://docs.byteplus.com/en/docs/modelark/2333589)
+и работает только после активации прав в BytePlus, enterprise verification и
+выдачи `ArkFullAccess` для нужного project.
+
+Поток в интерфейсе:
+
+1. Нажмите **Verify a person** и завершите H5-проверку BytePlus.
+2. После callback приложение получает `GroupId` и обновляет список portrait groups.
+3. Выберите фото/видео и нажмите **Save material**. Это только сохраняет файл в локальную библиотеку.
+4. В карточке материала нажмите **Send to check**. Только на этом шаге вызывается BytePlus `CreateAsset`.
+5. Приложение опрашивает `GetAsset`, пока статус не станет `Active` или `Failed`.
+6. Для обычного URL-reference нажмите **Use file**; для проверенного портрета — **Use asset**.
+7. **Copy ID** копирует BytePlus Asset ID. Его можно повторно вставить в поле **Reuse by Asset ID**.
+8. В prompt обращайтесь к ассетам по порядку: `image 1`, `video 1`, а не по Asset ID.
+
+Все файлы, загруженные через основной блок **Files**, также попадают в библиотеку материалов.
+Повторная загрузка идентичного файла определяется по SHA-256 и переиспользует существующую запись.
+
+Важно:
+
+- Файл для `CreateAsset` должен быть доступен BytePlus по публичному HTTPS URL.
+  Поэтому регистрация загруженного файла работает на Railway/публичном домене,
+  но не через `localhost`.
+- Asset и inference endpoint должны находиться в одном `BYTEPLUS_ASSET_PROJECT`.
+- AK/SK никогда не отправляются в браузер: HMAC-подпись выполняется на сервере.
+- Маршруты управления ассетами используют серверные credentials. Не публикуйте
+  приложение без собственной авторизации или Railway private networking.
+- После окончания оплаченных прав BytePlus применяет grace period и затем может
+  безвозвратно удалить созданные в оплаченный период assets/groups; храните исходники отдельно.
 
 ## API сервиса
 
@@ -135,6 +190,19 @@ MAX_UPLOAD_BYTES=104857600
   "imageWatermark": false,
   "imageUrls": "https://example.com/reference.png"
 }
+```
+
+Assets API proxy:
+
+```text
+POST /api/assets/verification-session
+POST /api/assets/verification-result
+POST /api/assets/create
+GET  /api/assets?projectName=default&groupId=...
+GET  /api/assets/status?projectName=default&assetId=...
+GET  /api/materials
+POST /api/materials/submit
+GET  /api/materials/status?materialId=...
 ```
 
 Ответ нормализуется до:
