@@ -12,6 +12,7 @@
 - Private real-person portrait library через BytePlus Assets API: H5-проверка личности, группы, загрузка и выбор `asset://` references.
 - Upload reference image/video/audio files and serve them as public `/uploads/...` URLs.
 - Persistent material library with local IDs, review status, Asset ID copy/reuse, and SHA-256 deduplication.
+- One-click verification of a generated Seedream hero through an automatically managed AIGC asset group.
 - Polling статуса видео-задачи, предпросмотр готового MP4 и синхронный предпросмотр Seedream images.
 - Чтение API ключей из `~/Desktop/tokens.txt` и переменных окружения.
 
@@ -37,6 +38,7 @@ ARK_API_KEY="your_key"
 BYTEPLUS_ACCESS_KEY_ID="your_ak"
 BYTEPLUS_SECRET_ACCESS_KEY="your_sk"
 BYTEPLUS_ASSET_PROJECT="default"
+BYTEPLUS_AIGC_GROUP_NAME="seedance-generated-heroes"
 ```
 
 Поддерживаются также имена `BYTEPLUS_ACCESS_KEY`, `BYTEPLUS_AK`,
@@ -129,7 +131,7 @@ MAX_UPLOAD_BYTES=104857600
 1. Нажмите **Verify a person** и завершите H5-проверку BytePlus.
 2. После callback приложение получает `GroupId` и обновляет список portrait groups.
 3. Выберите фото/видео и нажмите **Save material**. Это только сохраняет файл в локальную библиотеку.
-4. В карточке материала нажмите **Send to check**. Только на этом шаге вызывается BytePlus `CreateAsset`.
+4. В карточке материала нажмите **Check as real person**. Только на этом шаге вызывается BytePlus `CreateAsset` для выбранной `LivenessFace`-группы.
 5. Приложение опрашивает `GetAsset`, пока статус не станет `Active` или `Failed`.
 6. Для обычного URL-reference нажмите **Use file**; для проверенного портрета — **Use asset**.
 7. **Copy ID** копирует BytePlus Asset ID. Его можно повторно вставить в поле **Reuse by Asset ID**.
@@ -137,6 +139,25 @@ MAX_UPLOAD_BYTES=104857600
 
 Все файлы, загруженные через основной блок **Files**, также попадают в библиотеку материалов.
 Повторная загрузка идентичного файла определяется по SHA-256 и переиспользует существующую запись.
+
+### Сгенерированный герой
+
+Виртуального героя можно отправить на проверку двумя способами:
+
+- сразу после генерации Seedream — кнопкой **Проверить героя** под результатом;
+- прикрепив ранее созданное фото через **Files** — кнопкой **Проверить героя** прямо на карточке изображения.
+
+Для прикреплённого файла приложение сначала само загружает изображение. Оба способа работают
+без H5-проверки реального человека:
+
+1. Приложение находит или создаёт AIGC-группу `seedance-generated-heroes`.
+2. URL сгенерированного изображения отправляется в BytePlus через `CreateAsset` с включённой стандартной модерацией.
+3. Приложение опрашивает `GetAsset`, пока статус не станет `Active` или `Failed`.
+4. После `Active` становятся доступны **Copy Asset ID** и **Use in video**.
+
+Если Seedream вернул изображение как `data:` URL, сервис сохраняет его в `uploads/` и передаёт
+BytePlus публичный URL приложения. На локальном `localhost` такой URL недоступен BytePlus, поэтому
+полная проверка выполняется на публичном Railway-домене.
 
 Важно:
 

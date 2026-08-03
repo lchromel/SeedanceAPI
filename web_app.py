@@ -2,6 +2,7 @@
 import cgi
 import json
 import base64
+import binascii
 import datetime
 import hashlib
 import hmac
@@ -30,6 +31,7 @@ DATA_ROOT = os.path.abspath(
 UPLOAD_DIR = os.path.join(DATA_ROOT, "uploads")
 MATERIAL_LIBRARY_FILE = os.path.join(DATA_ROOT, "material_library.json")
 MATERIAL_LIBRARY_LOCK = threading.Lock()
+AIGC_GROUP_LOCK = threading.Lock()
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
 ALLOWED_UPLOAD_MIME_PREFIXES = ("image/", "video/", "audio/")
 
@@ -85,6 +87,9 @@ BYTEPLUS_ASSET_API_BASE_URL = os.environ.get(
 ).rstrip("/")
 BYTEPLUS_ASSET_REGION = os.environ.get("BYTEPLUS_ASSET_REGION", "ap-southeast-1")
 BYTEPLUS_ASSET_PROJECT = os.environ.get("BYTEPLUS_ASSET_PROJECT", "default")
+BYTEPLUS_AIGC_GROUP_NAME = os.environ.get(
+    "BYTEPLUS_AIGC_GROUP_NAME", "seedance-generated-heroes"
+)
 BYTEPLUS_ACCESS_KEY_NAMES = [
     "BYTEPLUS_ACCESS_KEY_ID",
     "BYTEPLUS_ACCESS_KEY",
@@ -251,6 +256,36 @@ def save_upload(field):
         "path": path,
         "sha256": sha256,
     }
+
+
+def save_generated_data_url(data_url, original_name="generated-hero.png"):
+    match = re.fullmatch(
+        r"data:(image/[A-Za-z0-9.+-]+);base64,(.+)",
+        str(data_url or "").strip(),
+        flags=re.DOTALL,
+    )
+    if not match:
+        raise ValueError("Generated result must be a public HTTP(S) image URL")
+    content_type, encoded = match.groups()
+    try:
+        content = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError("Generated image data is not valid base64") from exc
+    if not content:
+        raise ValueError("Generated image is empty")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise ValueError(
+            f"Generated image is too large. Limit is {MAX_UPLOAD_BYTES // (1024 * 1024)} MB."
+        )
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    digest = hashlib.sha256(content).hexdigest()
+    safe_name = safe_upload_name(original_name, content_type).split("-", 2)[-1]
+    file_name = f"{digest[:20]}-{safe_name}"
+    path = os.path.join(UPLOAD_DIR, file_name)
+    if not os.path.exists(path):
+        with open(path, "wb") as handle:
+            handle.write(content)
+    return file_name
 
 
 def utc_timestamp():
@@ -513,6 +548,44 @@ def unwrap_byteplus_asset_response(status_code, payload):
 def call_byteplus_asset_api(action, payload=None, timeout=45):
     status_code, response_payload = request_byteplus_asset_api(action, payload, timeout)
     return unwrap_byteplus_asset_response(status_code, response_payload)
+
+
+def ensure_aigc_asset_group(project_name, group_name=BYTEPLUS_AIGC_GROUP_NAME):
+    normalized_project = str(project_name or BYTEPLUS_ASSET_PROJECT).strip()
+    normalized_name = str(group_name or BYTEPLUS_AIGC_GROUP_NAME).strip()
+    with AIGC_GROUP_LOCK:
+        groups = call_byteplus_asset_api(
+            "ListAssetGroups",
+            {
+                "Filter": {"GroupType": "AIGC", "Name": normalized_name},
+                "PageNumber": 1,
+                "PageSize": 100,
+                "ProjectName": normalized_project,
+            },
+        )
+        items = groups.get("Items") or []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("Name") or "").strip() != normalized_name:
+                continue
+            group_id = str(item.get("Id") or item.get("GroupId") or "").strip()
+            if group_id:
+                return group_id
+        created = call_byteplus_asset_api(
+            "CreateAssetGroup",
+            {
+                "GroupType": "AIGC",
+                "Name": normalized_name,
+                "Title": "Generated heroes",
+                "Description": "Heroes generated in Seedance Studio",
+                "ProjectName": normalized_project,
+            },
+        )
+        group_id = str(created.get("Id") or created.get("GroupId") or "").strip()
+        if not group_id:
+            raise RuntimeError("BytePlus did not return an AIGC asset group ID")
+        return group_id
 
 
 def split_urls(value):
@@ -941,6 +1014,9 @@ class SeedanceHandler(BaseHTTPRequestHandler):
         if self.path == "/api/assets/verification-result":
             self.handle_asset_verification_result()
             return
+        if self.path == "/api/assets/check-generated":
+            self.handle_check_generated_asset()
+            return
         if self.path == "/api/assets/create":
             self.handle_create_asset()
             return
@@ -991,11 +1067,17 @@ class SeedanceHandler(BaseHTTPRequestHandler):
             data = read_json_body(self)
             material_id = str(data.get("materialId") or data.get("id") or "").strip()
             group_id = str(data.get("groupId") or "").strip()
+            group_type = str(data.get("groupType") or "AIGC").strip()
             project_name = str(data.get("projectName") or BYTEPLUS_ASSET_PROJECT).strip()
             if not material_id:
                 raise ValueError("materialId is required")
             if not group_id:
-                raise ValueError("groupId is required")
+                if group_type != "AIGC":
+                    raise ValueError("groupId is required for non-AIGC assets")
+                group_id = ensure_aigc_asset_group(
+                    project_name,
+                    str(data.get("groupName") or BYTEPLUS_AIGC_GROUP_NAME).strip(),
+                )
             record = get_material_record(material_id)
             if not record:
                 raise ValueError("material not found")
@@ -1158,6 +1240,60 @@ class SeedanceHandler(BaseHTTPRequestHandler):
                 payload["Name"] = name
             result = call_byteplus_asset_api("CreateAsset", payload, timeout=120)
             json_response(self, 200, result)
+        except PermissionError as exc:
+            json_response(self, 401, {"error": str(exc)})
+        except (ValueError, json.JSONDecodeError) as exc:
+            json_response(self, 400, {"error": str(exc)})
+        except RuntimeError as exc:
+            json_response(self, 502, {"error": str(exc)})
+
+    def handle_check_generated_asset(self):
+        try:
+            data = read_json_body(self)
+            generated_url = str(data.get("url") or "").strip()
+            project_name = str(
+                data.get("projectName") or BYTEPLUS_ASSET_PROJECT
+            ).strip()
+            if generated_url.startswith("data:image/"):
+                file_name = save_generated_data_url(generated_url)
+                asset_url = (
+                    f"{public_base_url(self)}/uploads/{urllib.parse.quote(file_name)}"
+                )
+            elif generated_url.startswith(("http://", "https://")):
+                asset_url = generated_url
+            else:
+                raise ValueError(
+                    "url must be a generated image HTTP(S) URL or image data URL"
+                )
+            group_id = ensure_aigc_asset_group(
+                project_name,
+                str(data.get("groupName") or BYTEPLUS_AIGC_GROUP_NAME).strip(),
+            )
+            payload = {
+                "GroupId": group_id,
+                "URL": asset_url,
+                "AssetType": "Image",
+                "ProjectName": project_name,
+            }
+            name = str(data.get("name") or "generated-hero").strip()
+            if name:
+                payload["Name"] = name
+            result = call_byteplus_asset_api("CreateAsset", payload, timeout=120)
+            asset_id = str(result.get("Id") or result.get("id") or "").strip()
+            if not asset_id:
+                raise RuntimeError("BytePlus did not return an Asset ID")
+            json_response(
+                self,
+                200,
+                {
+                    "assetId": asset_id,
+                    "assetUri": f"asset://{asset_id}",
+                    "status": "Processing",
+                    "groupId": group_id,
+                    "groupType": "AIGC",
+                    "projectName": project_name,
+                },
+            )
         except PermissionError as exc:
             json_response(self, 401, {"error": str(exc)})
         except (ValueError, json.JSONDecodeError) as exc:
@@ -1423,7 +1559,7 @@ HTML = """<!doctype html>
           <div class="section-heading">
             <div>
               <h2>Materials & private assets</h2>
-              <p>Save once, send to BytePlus review, then reuse by Asset ID</p>
+              <p>Check virtual heroes directly; use H5 only for real people</p>
             </div>
             <span class="status-pill idle" id="assetApiStatus">checking</span>
           </div>
@@ -1431,7 +1567,7 @@ HTML = """<!doctype html>
             <label>BytePlus project
               <input id="assetProject" value="default" autocomplete="off">
             </label>
-            <label>Portrait group
+            <label>Real-person group (optional)
               <select id="assetGroupSelect">
                 <option value="">No groups loaded</option>
               </select>
@@ -1953,6 +2089,28 @@ input[type="range"]::-moz-range-thumb {
   background: rgba(248, 113, 113, .18);
 }
 
+.image-card-check {
+  position: absolute;
+  z-index: 3;
+  left: 6px;
+  right: 6px;
+  bottom: 6px;
+  width: calc(100% - 12px);
+  min-height: 30px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 7px;
+  background: rgba(13, 13, 19, .88);
+  color: var(--ink);
+  font-size: 10px;
+  line-height: 1.2;
+  backdrop-filter: blur(8px);
+}
+
+.image-card-check:disabled {
+  opacity: .7;
+}
+
 .reference-preview {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -2254,7 +2412,14 @@ video {
   align-content: start;
   overflow: auto;
 }
-.image-result-grid a {
+.image-result-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.image-result-card > a {
   display: block;
   min-width: 0;
 }
@@ -2262,10 +2427,30 @@ video {
   width: 100%;
   height: auto;
   display: block;
-  border-radius: 8px;
-  border: 1px solid var(--line);
   background: #000;
 }
+.hero-check-panel {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+.hero-check-panel button {
+  min-height: 36px;
+}
+.hero-check-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 8px;
+}
+.hero-check-status {
+  min-height: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.hero-check-status.done { color: var(--good); }
+.hero-check-status.error { color: var(--bad); }
 .empty {
   color: var(--muted);
   padding: 24px;
@@ -2315,7 +2500,8 @@ const state = {
   baseUrl: "",
   pollTimer: null,
   privateAssets: [],
-  materials: []
+  materials: [],
+  generatedAssets: {}
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -2566,6 +2752,7 @@ function useMaterialFile(material) {
     url: material.url,
     previewUrl: material.url,
     name: material.originalName || material.fileName,
+    materialId: material.id,
     source: "material-library"
   };
   if (type === "image") {
@@ -2633,32 +2820,64 @@ async function refreshMaterialStatus(material, poll = false) {
 async function submitMaterialForReview(material) {
   if (!state.config.assets.enabled) {
     setAssetHelp("Для отправки на проверку добавьте BytePlus AK/SK.", "error");
-    return;
-  }
-  if (!assetGroupSelect.value) {
-    setAssetHelp("Сначала подтвердите личность и выберите portrait group.", "error");
-    return;
+    return null;
   }
   setAssetStatus("submitting");
   setAssetHelp(`Отправляю ${material.originalName} на проверку BytePlus...`);
   try {
+    return await reviewMaterialAsAigc(material);
+  } catch (error) {
+    setAssetStatus("error", "error");
+    setAssetHelp(error.message, "error");
+    return null;
+  }
+}
+
+async function reviewMaterialAsAigc(material) {
     const submitted = await apiFetch("/api/materials/submit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         materialId: material.id,
-        groupId: assetGroupSelect.value,
+        groupType: "AIGC",
         projectName: assetProject.value.trim() || "default",
         name: material.originalName
       })
     });
     upsertMaterial(submitted);
     renderMaterials();
-    await refreshMaterialStatus(submitted, true);
+    return await refreshMaterialStatus(submitted, true);
+}
+
+async function submitMaterialForRealPersonReview(material) {
+  const groupId = assetGroupSelect.value;
+  if (!groupId) {
+    setAssetHelp("Сначала завершите H5-проверку и выберите real-person group.", "error");
+    return null;
+  }
+  setAssetStatus("submitting");
+  setAssetHelp(`Проверяю ${material.originalName} для выбранного реального человека...`);
+  try {
+    const submitted = await apiFetch("/api/materials/submit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        materialId: material.id,
+        groupId,
+        groupType: "LivenessFace",
+        projectName: assetProject.value.trim() || "default",
+        name: material.originalName
+      })
+    });
+    upsertMaterial(submitted);
+    renderMaterials();
+    const checked = await refreshMaterialStatus(submitted, true);
     await loadPrivateAssets(true);
+    return checked;
   } catch (error) {
     setAssetStatus("error", "error");
     setAssetHelp(error.message, "error");
+    return null;
   }
 }
 
@@ -2728,10 +2947,22 @@ function renderMaterials() {
     } else {
       const reviewButton = document.createElement("button");
       reviewButton.type = "button";
-      reviewButton.textContent = status === "Failed" ? "Send again" : "Send to check";
+      reviewButton.textContent = status === "Failed"
+        ? "Проверить снова"
+        : materialType(material) === "Image"
+        ? "Проверить героя"
+        : "Send to check";
       reviewButton.disabled = !state.config.assets.enabled;
       reviewButton.addEventListener("click", () => submitMaterialForReview(material));
       actions.appendChild(reviewButton);
+      if (materialType(material) === "Image" && assetGroupSelect.value) {
+        const realPersonButton = document.createElement("button");
+        realPersonButton.type = "button";
+        realPersonButton.className = "secondary";
+        realPersonButton.textContent = "Check as real person";
+        realPersonButton.addEventListener("click", () => submitMaterialForRealPersonReview(material));
+        actions.appendChild(realPersonButton);
+      }
     }
     card.append(preview, meta, actions);
     materialList.appendChild(card);
@@ -3061,6 +3292,7 @@ function addImageRef(ref) {
     previewUrl: "",
     file: null,
     name: "",
+    materialId: "",
     ...ref
   });
   syncImageUrlsField();
@@ -3189,6 +3421,82 @@ function moveImageRef(fromIndex, toIndex) {
   renderImageReferences();
 }
 
+async function checkAttachedHero(ref, button) {
+  if (!state.config.assets.enabled) return;
+  button.disabled = true;
+  button.textContent = "Отправляю…";
+  try {
+    if (ref.file) {
+      const previousPreview = ref.previewUrl;
+      const uploaded = await uploadSingleReferenceFile(ref.file);
+      ref.url = uploaded.url;
+      ref.previewUrl = uploaded.url;
+      ref.materialId = uploaded.material ? uploaded.material.id : "";
+      ref.file = null;
+      if (previousPreview && previousPreview.startsWith("blob:")) {
+        URL.revokeObjectURL(previousPreview);
+      }
+      syncImageUrlsField();
+    }
+
+    const material = state.materials.find((item) =>
+      (ref.materialId && item.id === ref.materialId) || item.url === ref.url
+    );
+    let assetId = "";
+    let projectName = assetProject.value.trim() || "default";
+    if (material) {
+      button.textContent = "Проверяется…";
+      const checked = String(material.assetStatus || "") === "Active"
+        ? material
+        : await reviewMaterialAsAigc(material);
+      if (!checked || String(checked.assetStatus || "") !== "Active") {
+        throw new Error(checked?.assetError || "BytePlus не подтвердил героя.");
+      }
+      assetId = checked.assetId;
+      projectName = checked.assetProject || projectName;
+      ref.previewUrl = checked.url || ref.previewUrl;
+      ref.materialId = checked.id;
+    } else {
+      if (
+        !String(ref.url || "").startsWith("http://") &&
+        !String(ref.url || "").startsWith("https://")
+      ) {
+        throw new Error("Сначала загрузите изображение героя.");
+      }
+      const created = await apiFetch("/api/assets/check-generated", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: ref.url,
+          name: ref.name || "attached-hero",
+          projectName
+        })
+      });
+      assetId = created.assetId;
+      projectName = created.projectName || projectName;
+      button.textContent = "Проверяется…";
+      const checked = await waitForGeneratedHeroAsset(assetId, projectName);
+      if (String(checked.Status || "") !== "Active") {
+        throw new Error(
+          checked.FailedReason || checked.Error?.Message || "BytePlus не подтвердил героя."
+        );
+      }
+    }
+
+    ref.url = `asset://${assetId}`;
+    ref.source = "private-asset";
+    ref.assetId = assetId;
+    syncImageUrlsField();
+    renderImageReferences();
+    setUploadStatus(`Герой проверен и добавлен как asset://${assetId}.`);
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = "Повторить проверку";
+    button.title = error.message;
+    setUploadStatus(error.message, "error");
+  }
+}
+
 function renderImageReferences() {
   imageReferenceList.innerHTML = "";
   imageRefs.forEach((ref, index) => {
@@ -3206,6 +3514,21 @@ function renderImageReferences() {
     badge.className = "image-card-badge";
     badge.textContent = String(index + 1);
     item.appendChild(badge);
+
+    const checkButton = document.createElement("button");
+    checkButton.className = "image-card-check";
+    checkButton.type = "button";
+    const alreadyChecked = String(ref.url || "").startsWith("asset://");
+    checkButton.textContent = alreadyChecked ? "Герой проверен" : "Проверить героя";
+    checkButton.disabled = alreadyChecked || !(state.config && state.config.assets && state.config.assets.enabled);
+    checkButton.title = checkButton.disabled && !alreadyChecked ? "Добавьте BytePlus AK/SK" : "";
+    checkButton.draggable = false;
+    checkButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      checkAttachedHero(ref, checkButton);
+    });
+    item.appendChild(checkButton);
 
     const remove = document.createElement("button");
     remove.className = "reference-remove";
@@ -3304,7 +3627,7 @@ async function uploadSingleReferenceFile(file) {
     upsertMaterial(first.material);
     renderMaterials();
   }
-  return first.url;
+  return first;
 }
 
 async function uploadImageReferences(onProgress) {
@@ -3312,8 +3635,10 @@ async function uploadImageReferences(onProgress) {
   for (const ref of imageRefs) {
     if (!ref.file || ref.url) continue;
     const previousPreview = ref.previewUrl;
-    ref.url = await uploadSingleReferenceFile(ref.file);
+    const uploaded = await uploadSingleReferenceFile(ref.file);
+    ref.url = uploaded.url;
     ref.previewUrl = ref.url;
+    ref.materialId = uploaded.material ? uploaded.material.id : "";
     ref.file = null;
     if (previousPreview && previousPreview.startsWith("blob:")) {
       URL.revokeObjectURL(previousPreview);
@@ -3332,8 +3657,10 @@ async function uploadMediaReferences(onProgress) {
   for (const ref of mediaRefs) {
     if (!ref.file || ref.url) continue;
     const previousPreview = ref.previewUrl;
-    ref.url = await uploadSingleReferenceFile(ref.file);
+    const uploaded = await uploadSingleReferenceFile(ref.file);
+    ref.url = uploaded.url;
     ref.previewUrl = ref.url;
+    ref.materialId = uploaded.material ? uploaded.material.id : "";
     ref.file = null;
     if (previousPreview && previousPreview.startsWith("blob:")) {
       URL.revokeObjectURL(previousPreview);
@@ -3406,8 +3733,96 @@ async function pollStatus(manual = false) {
   }
 }
 
+function setHeroCheckStatus(element, message, kind = "") {
+  element.textContent = message;
+  element.className = `hero-check-status ${kind}`;
+}
+
+async function waitForGeneratedHeroAsset(assetId, projectName, onStatus) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const params = new URLSearchParams({ assetId, projectName });
+    const asset = await apiFetch(`/api/assets/status?${params.toString()}`);
+    const status = String(asset.Status || "Processing");
+    if (onStatus) onStatus(status, asset);
+    if (status === "Active" || status === "Failed") return asset;
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+  }
+  throw new Error("Проверка BytePlus не завершилась за 10 минут.");
+}
+
+function renderGeneratedHeroReady(actions, statusElement, entry) {
+  actions.replaceChildren();
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = "secondary";
+  copyButton.textContent = "Copy Asset ID";
+  copyButton.addEventListener("click", () => copyAssetId(entry.assetId));
+
+  const useButton = document.createElement("button");
+  useButton.type = "button";
+  useButton.textContent = "Use in video";
+  useButton.addEventListener("click", () => {
+    addPrivateAssetReference({
+      Id: entry.assetId,
+      AssetType: "Image",
+      Name: "Generated hero",
+      URL: entry.url,
+      Status: "Active"
+    });
+    setHeroCheckStatus(statusElement, `Герой добавлен как asset://${entry.assetId}.`, "done");
+  });
+  actions.append(copyButton, useButton);
+}
+
+async function checkGeneratedHero(url, index, checkButton, actions, statusElement) {
+  checkButton.disabled = true;
+  setHeroCheckStatus(statusElement, "Создаю виртуальный ассет и запускаю проверку…");
+  try {
+    const created = await apiFetch("/api/assets/check-generated", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url,
+        name: `generated-hero-${index + 1}`,
+        projectName: assetProject.value.trim() || "default"
+      })
+    });
+    const entry = {
+      assetId: created.assetId,
+      assetUri: created.assetUri,
+      groupId: created.groupId,
+      projectName: created.projectName,
+      status: created.status || "Processing",
+      url
+    };
+    state.generatedAssets[index] = entry;
+    setHeroCheckStatus(statusElement, `BytePlus: ${entry.status} · ${entry.assetId}`);
+    const asset = await waitForGeneratedHeroAsset(
+      entry.assetId,
+      entry.projectName,
+      (status) => {
+        entry.status = status;
+        setHeroCheckStatus(statusElement, `BytePlus: ${status} · ${entry.assetId}`);
+      }
+    );
+    entry.status = String(asset.Status || entry.status);
+    if (entry.status === "Failed") {
+      throw new Error(
+        asset.FailedReason || asset.Error?.Message || asset.Message || "BytePlus отклонил героя."
+      );
+    }
+    setHeroCheckStatus(statusElement, `Проверка пройдена · ${entry.assetId}`, "done");
+    renderGeneratedHeroReady(actions, statusElement, entry);
+  } catch (error) {
+    setHeroCheckStatus(statusElement, error.message, "error");
+    checkButton.disabled = false;
+    checkButton.textContent = "Повторить проверку";
+  }
+}
+
 function renderImageResults(urls) {
   const list = Array.isArray(urls) ? urls.filter(Boolean) : [];
+  state.generatedAssets = {};
   if (!list.length) {
     videoWrap.innerHTML = `<div class="empty">Изображения не вернулись в ответе API.</div>`;
     return;
@@ -3415,6 +3830,8 @@ function renderImageResults(urls) {
   const grid = document.createElement("div");
   grid.className = "image-result-grid";
   list.forEach((url, index) => {
+    const card = document.createElement("article");
+    card.className = "image-result-card";
     const link = document.createElement("a");
     link.href = url;
     link.target = "_blank";
@@ -3423,7 +3840,30 @@ function renderImageResults(urls) {
     img.src = url;
     img.alt = `Generated image ${index + 1}`;
     link.appendChild(img);
-    grid.appendChild(link);
+
+    const panel = document.createElement("div");
+    panel.className = "hero-check-panel";
+    const actions = document.createElement("div");
+    actions.className = "hero-check-actions";
+    const checkButton = document.createElement("button");
+    checkButton.type = "button";
+    checkButton.textContent = "Проверить героя";
+    checkButton.disabled = !(state.config && state.config.assets && state.config.assets.enabled);
+    checkButton.title = checkButton.disabled ? "Добавьте BytePlus AK/SK" : "";
+    const checkStatus = document.createElement("div");
+    setHeroCheckStatus(
+      checkStatus,
+      checkButton.disabled
+        ? "Для проверки нужны BytePlus AK/SK."
+        : "Создаст AIGC-ассет и дождётся результата проверки."
+    );
+    checkButton.addEventListener("click", () => {
+      checkGeneratedHero(url, index, checkButton, actions, checkStatus);
+    });
+    actions.appendChild(checkButton);
+    panel.append(actions, checkStatus);
+    card.append(link, panel);
+    grid.appendChild(card);
   });
   videoWrap.replaceChildren(grid);
 }
@@ -3482,7 +3922,7 @@ async function boot() {
   });
   if (assetApiEnabled) {
     setAssetStatus("ready", "done");
-    setAssetHelp("AK/SK найдены. Загрузите библиотеку или подтвердите нового человека.");
+    setAssetHelp("Виртуального героя проверяйте через Files или Result. H5 нужен только для реального человека.");
   } else {
     setAssetStatus("local only", "idle");
     setAssetHelp("Материалы можно сохранять и переиспользовать. Для отправки на проверку добавьте BytePlus AK/SK.");
@@ -3511,7 +3951,10 @@ async function boot() {
     event.preventDefault();
     addManualAssetReference();
   });
-  assetGroupSelect.addEventListener("change", () => loadPrivateAssets(true));
+  assetGroupSelect.addEventListener("change", () => {
+    renderMaterials();
+    loadPrivateAssets(true);
+  });
   assetProject.addEventListener("change", () => loadPrivateAssets());
   window.addEventListener("message", (event) => {
     if (event.origin !== location.origin) return;
