@@ -3635,10 +3635,10 @@ async function uploadImageReferences(onProgress) {
   for (const ref of imageRefs) {
     if (!ref.file || ref.url) continue;
     const previousPreview = ref.previewUrl;
-    const uploaded = await uploadSingleReferenceFile(ref.file);
-    ref.url = uploaded.url;
+    const uploadResult = await uploadSingleReferenceFile(ref.file);
+    ref.url = uploadResult.url;
     ref.previewUrl = ref.url;
-    ref.materialId = uploaded.material ? uploaded.material.id : "";
+    ref.materialId = uploadResult.material ? uploadResult.material.id : "";
     ref.file = null;
     if (previousPreview && previousPreview.startsWith("blob:")) {
       URL.revokeObjectURL(previousPreview);
@@ -3657,10 +3657,10 @@ async function uploadMediaReferences(onProgress) {
   for (const ref of mediaRefs) {
     if (!ref.file || ref.url) continue;
     const previousPreview = ref.previewUrl;
-    const uploaded = await uploadSingleReferenceFile(ref.file);
-    ref.url = uploaded.url;
+    const uploadResult = await uploadSingleReferenceFile(ref.file);
+    ref.url = uploadResult.url;
     ref.previewUrl = ref.url;
-    ref.materialId = uploaded.material ? uploaded.material.id : "";
+    ref.materialId = uploadResult.material ? uploadResult.material.id : "";
     ref.file = null;
     if (previousPreview && previousPreview.startsWith("blob:")) {
       URL.revokeObjectURL(previousPreview);
