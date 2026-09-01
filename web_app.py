@@ -90,6 +90,7 @@ BYTEPLUS_ASSET_PROJECT = os.environ.get("BYTEPLUS_ASSET_PROJECT", "default")
 BYTEPLUS_AIGC_GROUP_NAME = os.environ.get(
     "BYTEPLUS_AIGC_GROUP_NAME", "seedance-generated-heroes"
 )
+BYTEPLUS_ASSET_NAME_MAX_LENGTH = 64
 BYTEPLUS_ACCESS_KEY_NAMES = [
     "BYTEPLUS_ACCESS_KEY_ID",
     "BYTEPLUS_ACCESS_KEY",
@@ -130,6 +131,11 @@ def get_secret(names):
         if value:
             return value
     return ""
+
+
+def normalize_byteplus_asset_name(value):
+    """Return a BytePlus-compatible asset/group name."""
+    return str(value or "").strip()[:BYTEPLUS_ASSET_NAME_MAX_LENGTH]
 
 
 def default_model_for_provider(provider):
@@ -552,7 +558,9 @@ def call_byteplus_asset_api(action, payload=None, timeout=45):
 
 def ensure_aigc_asset_group(project_name, group_name=BYTEPLUS_AIGC_GROUP_NAME):
     normalized_project = str(project_name or BYTEPLUS_ASSET_PROJECT).strip()
-    normalized_name = str(group_name or BYTEPLUS_AIGC_GROUP_NAME).strip()
+    normalized_name = normalize_byteplus_asset_name(
+        group_name or BYTEPLUS_AIGC_GROUP_NAME
+    )
     with AIGC_GROUP_LOCK:
         groups = call_byteplus_asset_api(
             "ListAssetGroups",
@@ -1102,7 +1110,9 @@ class SeedanceHandler(BaseHTTPRequestHandler):
                 "AssetType": asset_type,
                 "ProjectName": project_name,
             }
-            name = str(data.get("name") or record.get("originalName") or "").strip()
+            name = normalize_byteplus_asset_name(
+                data.get("name") or record.get("originalName")
+            )
             if name:
                 payload["Name"] = name
             result = call_byteplus_asset_api("CreateAsset", payload, timeout=120)
@@ -1235,7 +1245,7 @@ class SeedanceHandler(BaseHTTPRequestHandler):
                     data.get("projectName") or BYTEPLUS_ASSET_PROJECT
                 ).strip(),
             }
-            name = str(data.get("name") or "").strip()
+            name = normalize_byteplus_asset_name(data.get("name"))
             if name:
                 payload["Name"] = name
             result = call_byteplus_asset_api("CreateAsset", payload, timeout=120)
@@ -1275,7 +1285,9 @@ class SeedanceHandler(BaseHTTPRequestHandler):
                 "AssetType": "Image",
                 "ProjectName": project_name,
             }
-            name = str(data.get("name") or "generated-hero").strip()
+            name = normalize_byteplus_asset_name(
+                data.get("name") or "generated-hero"
+            )
             if name:
                 payload["Name"] = name
             result = call_byteplus_asset_api("CreateAsset", payload, timeout=120)
@@ -1596,14 +1608,6 @@ HTML = """<!doctype html>
               </select>
             </label>
             <button type="button" class="secondary" id="addAssetByIdBtn">Use ID</button>
-          </div>
-          <h3 class="asset-subheading">Uploaded materials</h3>
-          <div class="material-list" id="materialList">
-            <div class="empty asset-empty">No uploaded materials yet.</div>
-          </div>
-          <h3 class="asset-subheading">BytePlus private library</h3>
-          <div class="private-asset-list" id="privateAssetList">
-            <div class="empty asset-empty">No private assets loaded.</div>
           </div>
         </section>
 
@@ -2882,6 +2886,7 @@ async function submitMaterialForRealPersonReview(material) {
 }
 
 function renderMaterials() {
+  if (!materialList) return;
   materialList.replaceChildren();
   if (!state.materials.length) {
     const empty = document.createElement("div");
@@ -2970,6 +2975,7 @@ function renderMaterials() {
 }
 
 function renderPrivateAssets() {
+  if (!privateAssetList) return;
   privateAssetList.replaceChildren();
   const assets = state.privateAssets || [];
   if (!assets.length) {
