@@ -1567,7 +1567,7 @@ HTML = """<!doctype html>
           <input name="audioUrls" type="hidden">
         </section>
 
-        <section class="form-section asset-library video-setting">
+        <section class="form-section asset-library" hidden>
           <div class="section-heading">
             <div>
               <h2>Materials & private assets</h2>
@@ -1625,7 +1625,7 @@ HTML = """<!doctype html>
             <label>Aspect Ratio
               <select name="aspectRatio" id="aspectRatio"></select>
             </label>
-            <label>Resolution
+            <label class="video-setting">Resolution
               <select name="resolution" id="resolution"></select>
             </label>
           </div>
@@ -1641,8 +1641,6 @@ HTML = """<!doctype html>
 
         <div class="checks video-options">
           <label><input name="generateAudio" type="checkbox"> Generate audio</label>
-          <label><input name="returnLastFrame" type="checkbox"> Return last frame</label>
-          <label><input name="webSearch" type="checkbox"> Web search tool</label>
         </div>
         <div class="checks image-options" hidden>
           <label><input name="imageWatermark" type="checkbox"> Watermark</label>
@@ -2631,8 +2629,8 @@ function collectPayload() {
   data.model = data.endpoint;
   data.baseUrl = provider.baseUrl;
   data.generateAudio = form.generateAudio.checked;
-  data.returnLastFrame = form.returnLastFrame.checked;
-  data.webSearch = form.webSearch.checked;
+  data.returnLastFrame = false;
+  data.webSearch = false;
   data.imageModel = state.config && state.config.image ? state.config.image.model : "";
   data.imageWatermark = form.imageWatermark ? form.imageWatermark.checked : false;
   if (resolutionEl.disabled) delete data.resolution;
