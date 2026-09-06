@@ -133,6 +133,44 @@ def get_secret(names):
     return ""
 
 
+def web_credentials():
+    return (
+        get_secret(["WEB_APP_BASIC_AUTH_USERNAME"]),
+        get_secret(["WEB_APP_BASIC_AUTH_PASSWORD"]),
+    )
+
+
+def upload_signature(file_name, expires):
+    username, password = web_credentials()
+    if not username or not password:
+        raise PermissionError("Web authentication is not configured")
+    key = hashlib.sha256((username + ":" + password).encode("utf-8")).digest()
+    return hmac.new(key, f"upload:{file_name}:{expires}".encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def signed_upload_url(file_name, base_url=""):
+    # Round to the hour to avoid changing URLs on every library refresh.
+    expires = str((int(time.time()) // 3600 + 24 * 7) * 3600)
+    query = urllib.parse.urlencode({"expires": expires, "signature": upload_signature(file_name, expires)})
+    return f"{base_url.rstrip('/')}/uploads/{urllib.parse.quote(file_name, safe='')}?{query}"
+
+
+def valid_upload_signature(path, params):
+    if not path.startswith("/uploads/"):
+        return False
+    file_name = urllib.parse.unquote(path.removeprefix("/uploads/"))
+    if not file_name or "/" in file_name or "\\" in file_name:
+        return False
+    expires = (params.get("expires") or [""])[0]
+    signature = (params.get("signature") or [""])[0]
+    try:
+        if int(expires) <= time.time():
+            return False
+        return hmac.compare_digest(signature.encode("utf-8"), upload_signature(file_name, expires).encode("ascii"))
+    except (ValueError, PermissionError):
+        return False
+
+
 def normalize_byteplus_asset_name(value):
     """Return a BytePlus-compatible asset/group name."""
     return str(value or "").strip()[:BYTEPLUS_ASSET_NAME_MAX_LENGTH]
@@ -180,7 +218,7 @@ def file_response(handler, path):
     size = os.path.getsize(path)
     handler.send_response(200)
     handler.send_header("Content-Type", content_type)
-    handler.send_header("Cache-Control", "public, max-age=31536000, immutable")
+    handler.send_header("Cache-Control", "private, no-store")
     handler.send_header("Content-Length", str(size))
     handler.end_headers()
     with open(path, "rb") as handle:
@@ -321,7 +359,7 @@ def _save_material_records_unlocked(records):
 
 def public_material_record(record, base_url=""):
     file_name = str(record.get("fileName") or "").strip()
-    relative_url = f"/uploads/{urllib.parse.quote(file_name)}" if file_name else ""
+    relative_url = signed_upload_url(file_name) if file_name else ""
     return {
         "id": str(record.get("id") or "").strip(),
         "url": (str(base_url).rstrip("/") + relative_url) if base_url and relative_url else relative_url,
@@ -924,11 +962,42 @@ class SeedanceHandler(BaseHTTPRequestHandler):
     server_version = "SeedanceWeb/1.0"
 
     def log_message(self, fmt, *args):
-        sys.stderr.write("[%s] %s\n" % (self.log_date_time_string(), fmt % args))
+        message = re.sub(r"\?[^\s]*", "?[redacted]", fmt % args)
+        sys.stderr.write("[%s] %s\n" % (self.log_date_time_string(), message))
+
+    def require_authentication(self, path, params=None):
+        if self.command == "GET" and path == "/health":
+            return True
+        username, password = web_credentials()
+        if not username or not password:
+            json_response(self, 503, {"error": "Set WEB_APP_BASIC_AUTH_USERNAME and WEB_APP_BASIC_AUTH_PASSWORD on the server."})
+            return False
+        if self.command == "GET" and valid_upload_signature(path, params or {}):
+            return True
+        scheme, _, value = self.headers.get("Authorization", "").partition(" ")
+        if scheme.lower() == "basic":
+            try:
+                provided = base64.b64decode(value, validate=True)
+                expected = (username + ":" + password).encode("utf-8")
+                if hmac.compare_digest(provided, expected):
+                    return True
+            except (ValueError, binascii.Error):
+                pass
+        body = b"Authentication required."
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", 'Basic realm="Seedance Studio", charset="UTF-8"')
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return False
 
     def do_GET(self):
         path, _, query = self.path.partition("?")
         params = urllib.parse.parse_qs(query)
+        if not self.require_authentication(path, params):
+            return
         if path == "/":
             text_response(self, 200, HTML)
             return
@@ -1004,6 +1073,8 @@ class SeedanceHandler(BaseHTTPRequestHandler):
         json_response(self, 404, {"error": "Not found"})
 
     def do_POST(self):
+        if not self.require_authentication(self.path.partition("?")[0]):
+            return
         if self.path == "/api/generate":
             self.handle_generate()
             return
@@ -1103,7 +1174,7 @@ class SeedanceHandler(BaseHTTPRequestHandler):
                 else "Image"
             )
             file_name = str(record.get("fileName") or "").strip()
-            asset_url = f"{public_base_url(self)}/uploads/{urllib.parse.quote(file_name)}"
+            asset_url = signed_upload_url(file_name, public_base_url(self))
             payload = {
                 "GroupId": group_id,
                 "URL": asset_url,
@@ -1267,7 +1338,7 @@ class SeedanceHandler(BaseHTTPRequestHandler):
             if generated_url.startswith("data:image/"):
                 file_name = save_generated_data_url(generated_url)
                 asset_url = (
-                    f"{public_base_url(self)}/uploads/{urllib.parse.quote(file_name)}"
+                    signed_upload_url(file_name, public_base_url(self))
                 )
             elif generated_url.startswith(("http://", "https://")):
                 asset_url = generated_url

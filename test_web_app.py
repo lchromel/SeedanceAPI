@@ -1,4 +1,5 @@
 import io
+import base64
 import json
 import unittest
 from unittest import mock
@@ -7,7 +8,10 @@ import web_app
 
 
 class FakeHandler:
+    require_authentication = web_app.SeedanceHandler.require_authentication
+
     def __init__(self):
+        self.command = "GET"
         self.status = None
         self.headers = {}
         self.wfile = io.BytesIO()
@@ -69,6 +73,68 @@ class AssetLibraryTests(unittest.TestCase):
 
         self.assertEqual([item["Id"] for item in payload["assets"]], ["person-1"])
         self.assertEqual(payload["assetCount"], 1)
+
+
+class AuthenticationTests(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.object(web_app, "web_credentials", return_value=("test-user", "test-password"))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def request(self, path, method="GET", authorization=None):
+        handler = FakeHandler()
+        handler.command = method
+        handler.path = path
+        if authorization is not None:
+            handler.headers["Authorization"] = authorization
+        if method == "GET":
+            web_app.SeedanceHandler.do_GET(handler)
+        else:
+            web_app.SeedanceHandler.do_POST(handler)
+        return handler
+
+    def test_page_api_and_uploads_require_authentication(self):
+        for path, method in [("/", "GET"), ("/app.js", "GET"), ("/api/assets", "GET"),
+                             ("/uploads/test.png", "GET"), ("/api/generate", "POST"),
+                             ("/api/upload-reference", "POST")]:
+            with self.subTest(path=path):
+                response = self.request(path, method)
+                self.assertEqual(response.status, 401)
+                self.assertIn("Basic", response.headers["WWW-Authenticate"])
+
+    def test_correct_credentials_open_page(self):
+        auth = "Basic " + base64.b64encode(b"test-user:test-password").decode()
+        response = self.request("/", authorization=auth)
+        self.assertEqual(response.status, 200)
+        self.assertIn(b"Seedance", response.wfile.getvalue())
+
+    def test_invalid_credentials_and_malformed_headers_are_denied(self):
+        for value in ("Basic !!!", "Basic " + base64.b64encode(b"test-user:wrong").decode(), "Bearer wrong"):
+            with self.subTest(value=value):
+                self.assertEqual(self.request("/", authorization=value).status, 401)
+
+    def test_health_public_but_missing_configuration_fails_closed(self):
+        with mock.patch.object(web_app, "web_credentials", return_value=("", "")):
+            self.assertEqual(self.request("/health").status, 200)
+            self.assertEqual(self.request("/").status, 503)
+            self.assertEqual(self.request("/api/generate", "POST").status, 503)
+
+    def test_signed_file_access_without_login(self):
+        url = web_app.signed_upload_url("example.png")
+        with mock.patch.object(web_app, "file_response") as serve:
+            self.request(url)
+            serve.assert_called_once()
+        self.assertEqual(self.request(url.replace("example.png", "another.png")).status, 401)
+        self.assertEqual(self.request(url.replace("/uploads/example.png", "/api/assets")).status, 401)
+        self.assertEqual(self.request(url, "POST").status, 401)
+
+    def test_expired_links_and_password_rotation_revoke_file_access(self):
+        with mock.patch.object(web_app.time, "time", return_value=1000):
+            old_url = web_app.signed_upload_url("example.png")
+        self.assertEqual(self.request(old_url).status, 401)
+        current_url = web_app.signed_upload_url("example.png")
+        with mock.patch.object(web_app, "web_credentials", return_value=("test-user", "changed")):
+            self.assertEqual(self.request(current_url).status, 401)
 
 
 if __name__ == "__main__":
