@@ -38,12 +38,12 @@ ALLOWED_UPLOAD_MIME_PREFIXES = ("image/", "video/", "audio/")
 
 PROVIDERS = {
     "byteplus": {
-        "name": "BytePlus Ark / Seedance 2.0",
+        "name": "BytePlus Ark / Seedance 2.5",
         "base_url": "https://ark.ap-southeast.bytepluses.com/api/v3",
         "submit_path": "/contents/generations/tasks",
         "status_path": "/contents/generations/tasks/{task_id}",
-        "models": ["dreamina-seedance-2-0-260128"],
-        "durations": list(range(4, 16)),
+        "models": ["dreamina-seedance-2-5-260628"],
+        "durations": list(range(4, 31)),
         "ratios": ["auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
         "resolutions": ["480p", "720p", "1080p"],
         "token_names": ["ARK_API_KEY", "BYTEPLUS_ARK_API_KEY", "BYTEPLUS_API_KEY", "SEEDANCE_API_KEY"],
@@ -768,7 +768,7 @@ def build_submit_payload(provider_id, data):
             "model": model,
             "content": content,
             "ratio": ratio or "auto",
-            "duration": max(4, min(15, duration)),
+            "duration": max(min(PROVIDERS[provider_id]["durations"]), min(max(PROVIDERS[provider_id]["durations"]), duration)),
             "resolution": data.get("resolution") or "720p",
             "generate_audio": bool(data.get("generateAudio")),
         }
@@ -1612,7 +1612,7 @@ HTML = """<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Seedance 2 Video Studio</title>
+  <title>Seedance 2.5 Video Studio</title>
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -1723,8 +1723,8 @@ HTML = """<!doctype html>
               <label for="duration">Duration</label>
               <span id="durationValue">5s</span>
             </div>
-            <input name="duration" id="duration" type="range" min="4" max="15" value="5">
-            <div class="duration-scale"><span>4s</span><span>15s</span></div>
+            <input name="duration" id="duration" type="range" min="4" max="30" value="5">
+            <div class="duration-scale"><span>4s</span><span>30s</span></div>
           </div>
           <div class="grid two">
             <label>Aspect Ratio
@@ -2810,6 +2810,12 @@ function setMode(mode) {
 
 function refreshProviderFields() {
   const provider = currentProvider();
+  durationEl.min = Math.min(...provider.durations);
+  durationEl.max = Math.max(...provider.durations);
+  durationEl.value = Math.max(Number(durationEl.min), Math.min(Number(durationEl.max), Number(durationEl.value)));
+  const durationLabels = document.querySelectorAll(".duration-scale span");
+  durationLabels[0].textContent = `${durationEl.min}s`;
+  durationLabels[1].textContent = `${durationEl.max}s`;
   optionList(ratioEl, provider.ratios, "16:9");
   if (provider.resolutions.length) {
     optionList(resolutionEl, provider.resolutions, "720p");
@@ -3491,7 +3497,7 @@ async function createPrivateAsset() {
 
 function updateDurationSlider() {
   const min = Number(durationEl.min || 4);
-  const max = Number(durationEl.max || 15);
+  const max = Number(durationEl.max || 30);
   const value = Number(durationEl.value || 5);
   const pct = ((value - min) / (max - min)) * 100;
   durationEl.style.background = `linear-gradient(to right, var(--accent) 0%, var(--accent) ${pct}%, var(--field) ${pct}%, var(--field) 100%)`;

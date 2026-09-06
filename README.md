@@ -1,10 +1,10 @@
 # Seedance / Seedream Studio
 
-Локальный web-сервис для генерации видео через Seedance 2 и изображений через Seedream 5 compatible BytePlus Ark API.
+Локальный web-сервис для генерации видео через Seedance 2.5 и изображений через Seedream 5 compatible BytePlus Ark API.
 
 ## Возможности
 
-- Генерация через BytePlus Ark Seedance 2.0, как в Yango Perf.
+- Генерация через BytePlus Ark Seedance 2.5 длительностью от 4 до 30 секунд.
 - Генерация изображений через BytePlus Ark Seedream 5 (`seedream-5-0-260128`).
 - Text-to-video через `seedanceapi.org/v2`.
 - Поддержка reAPI `doubao-seedance-2.0` variants.
@@ -45,7 +45,8 @@ BYTEPLUS_AIGC_GROUP_NAME="seedance-generated-heroes"
 `ARK_ACCESS_KEY_ID`, `BYTEPLUS_SECRET_KEY`, `BYTEPLUS_SK` и
 `ARK_SECRET_ACCESS_KEY`.
 
-Если BytePlus выдал отдельный endpoint ID, добавьте его тоже:
+Если BytePlus выдал отдельный endpoint ID, добавьте его тоже. Он имеет приоритет
+над моделью по умолчанию и должен быть привязан к Seedance 2.5:
 
 ```env
 SEEDANCE_ENDPOINT_ID="your_endpoint_id"
@@ -266,7 +267,8 @@ GET  /api/materials/status?materialId=...
 - Submit: `POST /contents/generations/tasks`
 - Status: `GET /contents/generations/tasks/{task_id}`
 - Image submit: `POST /images/generations`
-- Model: `dreamina-seedance-2-0-260128`
+- Model: `dreamina-seedance-2-5-260628`
+- Duration: 4–30 секунд
 - Image model: `seedream-5-0-260128`
 - Endpoint env: `SEEDANCE_ENDPOINT_ID`, `BYTEPLUS_ARK_ENDPOINT_ID`, `ARK_ENDPOINT_ID`
 - Image endpoint env: `SEEDREAM_ENDPOINT_ID`, `BYTEPLUS_SEEDREAM_ENDPOINT_ID`, `ARK_IMAGE_ENDPOINT_ID`
