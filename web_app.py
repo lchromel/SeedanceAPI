@@ -1567,13 +1567,20 @@ HTML = """<!doctype html>
           <input name="audioUrls" type="hidden">
         </section>
 
-        <section class="form-section asset-library" hidden>
+        <section class="form-section asset-library">
           <div class="section-heading">
             <div>
-              <h2>Materials & private assets</h2>
-              <p>Check virtual heroes directly; use H5 only for real people</p>
+              <h2>Asset library</h2>
+              <p>Saved files are loaded automatically when the page opens</p>
             </div>
             <span class="status-pill idle" id="assetApiStatus">checking</span>
+          </div>
+          <div class="asset-subheading-row">
+            <h3 class="asset-subheading">Uploaded materials</h3>
+            <span class="library-count" id="materialCount">loading</span>
+          </div>
+          <div class="material-list" id="materialList" aria-live="polite" aria-busy="true">
+            <div class="empty asset-empty">Загружаю сохранённые материалы…</div>
           </div>
           <div class="grid two">
             <label>BytePlus project
@@ -1608,6 +1615,13 @@ HTML = """<!doctype html>
               </select>
             </label>
             <button type="button" class="secondary" id="addAssetByIdBtn">Use ID</button>
+          </div>
+          <div class="asset-subheading-row">
+            <h3 class="asset-subheading">Verified BytePlus assets</h3>
+            <span class="library-count" id="privateAssetCount">loading</span>
+          </div>
+          <div class="private-asset-list" id="privateAssetList" aria-live="polite" aria-busy="true">
+            <div class="empty asset-empty">Проверяю приватную библиотеку…</div>
           </div>
         </section>
 
@@ -2227,11 +2241,26 @@ input[type="range"]::-moz-range-thumb {
 .asset-subheading {
   margin: 2px 0 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: .06em;
 }
+
+.asset-subheading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.library-count {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.library-count.error { color: var(--bad); }
 
 .private-asset-list,
 .material-list {
@@ -2540,6 +2569,8 @@ const manualAssetType = $("#manualAssetType");
 const addAssetByIdBtn = $("#addAssetByIdBtn");
 const materialList = $("#materialList");
 const privateAssetList = $("#privateAssetList");
+const materialCount = $("#materialCount");
+const privateAssetCount = $("#privateAssetCount");
 const modeButtons = document.querySelectorAll(".mode-btn");
 const videoSettings = document.querySelectorAll(".video-setting");
 const imageSettings = document.querySelectorAll(".image-settings");
@@ -2784,12 +2815,33 @@ function useMaterialAsset(material) {
 }
 
 async function loadMaterials() {
+  if (materialList) materialList.setAttribute("aria-busy", "true");
+  if (materialCount) {
+    materialCount.textContent = "loading";
+    materialCount.className = "library-count";
+  }
   try {
     const data = await apiFetch("/api/materials");
     state.materials = Array.isArray(data.materials) ? data.materials : [];
     renderMaterials();
+    if (materialCount) {
+      const count = state.materials.length;
+      materialCount.textContent = `${count} saved`;
+    }
   } catch (error) {
-    setAssetHelp(error.message, "error");
+    state.materials = [];
+    if (materialList) {
+      const empty = document.createElement("div");
+      empty.className = "empty asset-empty";
+      empty.textContent = `Не удалось загрузить материалы: ${error.message}`;
+      materialList.replaceChildren(empty);
+    }
+    if (materialCount) {
+      materialCount.textContent = "error";
+      materialCount.className = "library-count error";
+    }
+  } finally {
+    if (materialList) materialList.setAttribute("aria-busy", "false");
   }
 }
 
@@ -2886,6 +2938,10 @@ async function submitMaterialForRealPersonReview(material) {
 function renderMaterials() {
   if (!materialList) return;
   materialList.replaceChildren();
+  if (materialCount) {
+    materialCount.textContent = `${state.materials.length} saved`;
+    materialCount.className = "library-count";
+  }
   if (!state.materials.length) {
     const empty = document.createElement("div");
     empty.className = "empty asset-empty";
@@ -2976,6 +3032,10 @@ function renderPrivateAssets() {
   if (!privateAssetList) return;
   privateAssetList.replaceChildren();
   const assets = state.privateAssets || [];
+  if (privateAssetCount) {
+    privateAssetCount.textContent = `${assets.length} available`;
+    privateAssetCount.className = "library-count";
+  }
   if (!assets.length) {
     const empty = document.createElement("div");
     empty.className = "empty asset-empty";
@@ -3056,7 +3116,23 @@ function renderAssetGroups(groups) {
 }
 
 async function loadPrivateAssets(filterSelectedGroup = false) {
-  if (!state.config.assets.enabled) return;
+  if (!state.config.assets.enabled) {
+    state.privateAssets = [];
+    if (privateAssetCount) {
+      privateAssetCount.textContent = "AK/SK required";
+      privateAssetCount.className = "library-count";
+    }
+    if (privateAssetList) {
+      privateAssetList.setAttribute("aria-busy", "false");
+      const empty = document.createElement("div");
+      empty.className = "empty asset-empty";
+      empty.textContent = "Добавьте BytePlus AK/SK, чтобы загрузить приватные ассеты.";
+      privateAssetList.replaceChildren(empty);
+    }
+    return;
+  }
+  if (privateAssetList) privateAssetList.setAttribute("aria-busy", "true");
+  if (privateAssetCount) privateAssetCount.textContent = "loading";
   setAssetStatus("loading");
   const params = new URLSearchParams({
     projectName: assetProject.value.trim() || "default"
@@ -3074,6 +3150,24 @@ async function loadPrivateAssets(filterSelectedGroup = false) {
   } catch (error) {
     setAssetStatus("error", "error");
     setAssetHelp(error.message, "error");
+    if (privateAssetCount) {
+      privateAssetCount.textContent = "error";
+      privateAssetCount.className = "library-count error";
+    }
+  } finally {
+    if (privateAssetList) privateAssetList.setAttribute("aria-busy", "false");
+  }
+}
+
+async function refreshAssetLibrary() {
+  refreshAssetsBtn.disabled = true;
+  try {
+    await Promise.all([
+      loadMaterials(),
+      loadPrivateAssets(Boolean(assetGroupSelect.value))
+    ]);
+  } finally {
+    refreshAssetsBtn.disabled = false;
   }
 }
 
@@ -3921,7 +4015,7 @@ async function boot() {
   state.providerConfig = state.config.providers[state.provider];
   assetProject.value = state.config.assets.projectName || "default";
   const assetApiEnabled = Boolean(state.config.assets.enabled);
-  [assetProject, assetGroupSelect, startVerificationBtn, refreshAssetsBtn].forEach((control) => {
+  [assetProject, assetGroupSelect, startVerificationBtn].forEach((control) => {
     control.disabled = !assetApiEnabled;
   });
   if (assetApiEnabled) {
@@ -3947,7 +4041,7 @@ async function boot() {
   });
   pollBtn.addEventListener("click", () => pollStatus(true));
   startVerificationBtn.addEventListener("click", startAssetVerification);
-  refreshAssetsBtn.addEventListener("click", () => loadPrivateAssets(Boolean(assetGroupSelect.value)));
+  refreshAssetsBtn.addEventListener("click", refreshAssetLibrary);
   createAssetBtn.addEventListener("click", createPrivateAsset);
   addAssetByIdBtn.addEventListener("click", addManualAssetReference);
   manualAssetInput.addEventListener("keydown", (event) => {
@@ -4002,8 +4096,7 @@ async function boot() {
   }
   durationEl.addEventListener("input", updateDurationSlider);
   refreshProviderFields();
-  await loadMaterials();
-  if (assetApiEnabled) await loadPrivateAssets();
+  await refreshAssetLibrary();
   pretty({ ready: true, provider: state.provider });
 }
 
