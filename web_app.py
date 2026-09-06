@@ -835,6 +835,11 @@ def build_image_payload(provider_id, data):
         raise ValueError("Введите prompt для генерации изображения.")
 
     image_urls = split_urls(data.get("imageUrls"))
+    if any(url.lower().startswith("asset://") for url in image_urls):
+        raise ValueError(
+            "Для генерации изображения нужен исходный файл или ссылка на изображение. "
+            "Ссылки asset:// предназначены для видео. Прикрепите исходное изображение через Files."
+        )
     payload = {
         "model": str(data.get("imageModel") or default_byteplus_image_model()).strip(),
         "prompt": prompt,
@@ -1657,7 +1662,7 @@ HTML = """<!doctype html>
           <input name="audioUrls" type="hidden">
         </section>
 
-        <section class="form-section asset-library">
+        <section class="form-section asset-library video-setting">
           <div class="section-heading">
             <h2>Assets</h2>
             <div class="library-toolbar">
@@ -2806,6 +2811,7 @@ function setMode(mode) {
   pollBtn.hidden = state.mode === "image";
   pollBtn.disabled = state.mode === "image" || !state.taskId;
   submitBtn.textContent = state.mode === "image" ? "Generate image" : "Generate video";
+  renderImageReferences();
 }
 
 function refreshProviderFields() {
@@ -2840,6 +2846,9 @@ function collectPayload() {
   syncImageUrlsField();
   syncMediaUrlsFields();
   const data = Object.fromEntries(new FormData(form).entries());
+  if (state.mode === "image") {
+    data.imageUrls = imageRefs.map(imageGenerationReferenceUrl).filter(Boolean);
+  }
   const provider = currentProvider();
   data.provider = state.provider;
   data.endpoint = provider.endpointId || provider.models[0];
@@ -3575,6 +3584,21 @@ function syncImageUrlsField() {
   field.value = imageRefs.map((ref) => ref.url).filter(Boolean).join("\\n");
 }
 
+function imageGenerationReferenceUrl(ref) {
+  if (!/^asset:\/\//i.test(ref.url || "")) return ref.url;
+  const assetId = ref.url.slice(8);
+  const material = state.materials.find((item) =>
+    (ref.materialId && item.id === ref.materialId) || item.assetId === assetId
+  );
+  const asset = state.privateAssets.find((item) => String(item.Id || "") === assetId);
+  const sourceUrl = [material?.url, ref.sourceUrl, ref.previewUrl, asset?.URL]
+    .find((url) => /^(https?:\/\/|data:image\/)/i.test(url || ""));
+  if (!sourceUrl) {
+    throw new Error(`У референса «${imageRefLabel(ref)}» нет исходного изображения. Прикрепите его через Files: Asset ID подходит только для видео.`);
+  }
+  return sourceUrl;
+}
+
 function syncMediaUrlsFields() {
   const videoField = form.elements.videoUrls;
   const audioField = form.elements.audioUrls;
@@ -3794,6 +3818,7 @@ async function checkAttachedHero(ref, button) {
       }
     }
 
+    ref.sourceUrl = ref.url;
     ref.url = `asset://${assetId}`;
     ref.source = "private-asset";
     ref.assetId = assetId;
@@ -3828,6 +3853,7 @@ function renderImageReferences() {
 
     const checkButton = document.createElement("button");
     checkButton.className = "image-card-check";
+    checkButton.hidden = state.mode === "image";
     checkButton.type = "button";
     const alreadyChecked = String(ref.url || "").startsWith("asset://");
     checkButton.textContent = alreadyChecked ? "Герой проверен" : "Проверить героя";
@@ -4158,7 +4184,7 @@ function renderImageResults(urls) {
     actions.className = "hero-check-actions";
     const checkButton = document.createElement("button");
     checkButton.type = "button";
-    checkButton.textContent = "Проверить героя";
+    checkButton.textContent = "Проверить героя для видео";
     checkButton.disabled = !(state.config && state.config.assets && state.config.assets.enabled);
     checkButton.title = checkButton.disabled ? "Добавьте BytePlus AK/SK" : "";
     const checkStatus = document.createElement("div");

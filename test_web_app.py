@@ -26,6 +26,30 @@ class FakeHandler:
         pass
 
 
+class ImageGenerationTests(unittest.TestCase):
+    def test_text_only_generation_needs_no_assets(self):
+        payload = web_app.build_image_payload("byteplus", {"prompt": "A coastline"})
+        self.assertNotIn("image", payload)
+
+    def test_asset_reference_is_rejected_before_fetching_images(self):
+        for uri in ("asset://asset-20260906230938-4qpst", "ASSET://example"):
+            with self.subTest(uri=uri), mock.patch.object(web_app, "remote_image_as_data_url") as fetch:
+                with self.assertRaisesRegex(ValueError, "исходный файл"):
+                    web_app.build_image_payload("byteplus", {
+                        "prompt": "A coastline", "imageUrls": ["https://example.com/a.png", uri]
+                    })
+                fetch.assert_not_called()
+
+    def test_regular_references_are_preserved_in_order(self):
+        image = "data:image/png;base64,aGVsbG8="
+        with mock.patch.object(web_app, "remote_image_as_data_url", return_value=image) as fetch:
+            payload = web_app.build_image_payload("byteplus", {
+                "prompt": "A coastline", "imageUrls": ["https://example.com/a.png", image]
+            })
+        self.assertEqual(payload["image"], [image, image])
+        self.assertEqual(fetch.call_args_list, [mock.call("https://example.com/a.png"), mock.call(image)])
+
+
 class AssetLibraryTests(unittest.TestCase):
     def call_endpoint(self, params, responses):
         handler = FakeHandler()
