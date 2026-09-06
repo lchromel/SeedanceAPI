@@ -590,6 +590,8 @@ def unwrap_byteplus_asset_response(status_code, payload):
 
 
 def call_byteplus_asset_api(action, payload=None, timeout=45):
+    if action == "CreateAsset":
+        payload = {**(payload or {}), "Moderation": {"Strategy": "Skip"}}
     status_code, response_payload = request_byteplus_asset_api(action, payload, timeout)
     return unwrap_byteplus_asset_response(status_code, response_payload)
 
@@ -3085,7 +3087,7 @@ async function refreshMaterialStatus(material, poll = false) {
     setAssetStatus(status.toLowerCase(), status === "Active" ? "done" : status === "Failed" ? "error" : "idle");
     setAssetHelp(
       status === "Active"
-        ? `Материал прошёл проверку. Asset ID: ${updated.assetId}`
+        ? `Материал готов к использованию. Asset ID: ${updated.assetId}`
         : status === "Failed"
         ? updated.assetError || "BytePlus отклонил материал."
         : `Материал ${updated.originalName}: ${status}.`,
@@ -3824,7 +3826,7 @@ async function checkAttachedHero(ref, button) {
     ref.assetId = assetId;
     syncImageUrlsField();
     renderImageReferences();
-    setUploadStatus(`Герой проверен и добавлен как asset://${assetId}.`);
+    setUploadStatus(`Герой готов и добавлен как asset://${assetId}.`);
   } catch (error) {
     button.disabled = false;
     button.textContent = "Повторить проверку";
@@ -3856,7 +3858,7 @@ function renderImageReferences() {
     checkButton.hidden = state.mode === "image";
     checkButton.type = "button";
     const alreadyChecked = String(ref.url || "").startsWith("asset://");
-    checkButton.textContent = alreadyChecked ? "Герой проверен" : "Проверить героя";
+    checkButton.textContent = alreadyChecked ? "Герой готов" : "Проверить героя";
     checkButton.disabled = alreadyChecked || !(state.config && state.config.assets && state.config.assets.enabled);
     checkButton.title = checkButton.disabled && !alreadyChecked ? "Добавьте BytePlus AK/SK" : "";
     checkButton.draggable = false;
@@ -4148,7 +4150,7 @@ async function checkGeneratedHero(url, index, checkButton, actions, statusElemen
         asset.FailedReason || asset.Error?.Message || asset.Message || "BytePlus отклонил героя."
       );
     }
-    setHeroCheckStatus(statusElement, `Проверка пройдена · ${entry.assetId}`, "done");
+    setHeroCheckStatus(statusElement, `Ассет готов · ${entry.assetId}`, "done");
     renderGeneratedHeroReady(actions, statusElement, entry);
   } catch (error) {
     setHeroCheckStatus(statusElement, error.message, "error");
