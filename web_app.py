@@ -1326,28 +1326,47 @@ class SeedanceHandler(BaseHTTPRequestHandler):
                 "ProjectName": project_name,
             }
             groups = call_byteplus_asset_api("ListAssetGroups", groups_payload)
-            assets_filter = {"GroupType": "LivenessFace"}
-            if group_id:
-                assets_filter["GroupIds"] = [group_id]
-            assets = call_byteplus_asset_api(
-                "ListAssets",
-                {
-                    "Filter": assets_filter,
-                    "PageNumber": 1,
-                    "PageSize": 100,
-                    "SortBy": "CreateTime",
-                    "SortOrder": "Desc",
-                    "ProjectName": project_name,
-                },
+            asset_group_types = ["LivenessFace"] if group_id else ["AIGC", "LivenessFace"]
+            asset_items = []
+            asset_count = 0
+            seen_asset_ids = set()
+            for group_type in asset_group_types:
+                assets_filter = {"GroupType": group_type}
+                if group_id:
+                    assets_filter["GroupIds"] = [group_id]
+                assets = call_byteplus_asset_api(
+                    "ListAssets",
+                    {
+                        "Filter": assets_filter,
+                        "PageNumber": 1,
+                        "PageSize": 100,
+                        "SortBy": "CreateTime",
+                        "SortOrder": "Desc",
+                        "ProjectName": project_name,
+                    },
+                )
+                asset_count += int(assets.get("TotalCount") or 0)
+                for item in assets.get("Items") or []:
+                    if not isinstance(item, dict):
+                        continue
+                    asset_id = str(item.get("Id") or item.get("AssetId") or "").strip()
+                    if asset_id and asset_id in seen_asset_ids:
+                        continue
+                    if asset_id:
+                        seen_asset_ids.add(asset_id)
+                    asset_items.append(item)
+            asset_items.sort(
+                key=lambda item: str(item.get("CreateTime") or item.get("CreatedAt") or ""),
+                reverse=True,
             )
             json_response(
                 self,
                 200,
                 {
                     "groups": groups.get("Items") or [],
-                    "assets": assets.get("Items") or [],
+                    "assets": asset_items,
                     "groupCount": groups.get("TotalCount") or 0,
-                    "assetCount": assets.get("TotalCount") or 0,
+                    "assetCount": asset_count,
                 },
             )
         except PermissionError as exc:
@@ -3097,13 +3116,10 @@ function renderPrivateAssets() {
 function renderAssetGroups(groups) {
   const current = assetGroupSelect.value;
   assetGroupSelect.replaceChildren();
-  if (!groups.length) {
-    const option = document.createElement("option");
-    option.value = "";
-    option.textContent = "No verified groups";
-    assetGroupSelect.appendChild(option);
-    return;
-  }
+  const allOption = document.createElement("option");
+  allOption.value = "";
+  allOption.textContent = groups.length ? "All verified assets" : "No real-person groups";
+  assetGroupSelect.appendChild(allOption);
   groups.forEach((group) => {
     const option = document.createElement("option");
     option.value = group.Id;
@@ -3112,6 +3128,8 @@ function renderAssetGroups(groups) {
   });
   if (groups.some((group) => group.Id === current)) {
     assetGroupSelect.value = current;
+  } else {
+    assetGroupSelect.value = "";
   }
 }
 

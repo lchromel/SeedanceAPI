@@ -11,7 +11,7 @@
 - Elements-style references через `@image1`, `@video1`, `@audio1` where provider supports them.
 - Private real-person portrait library через BytePlus Assets API: H5-проверка личности, группы, загрузка и выбор `asset://` references.
 - Upload reference image/video/audio files and serve them as public `/uploads/...` URLs.
-- Persistent material library with local IDs, review status, Asset ID copy/reuse, and SHA-256 deduplication.
+- Persistent material library with local IDs, review status, Asset ID copy/reuse, SHA-256 deduplication, and automatic loading of both AIGC and verified real-person assets.
 - One-click verification of a generated Seedream hero through an automatically managed AIGC asset group.
 - Polling статуса видео-задачи, предпросмотр готового MP4 и синхронный предпросмотр Seedream images.
 - Чтение API ключей из `~/Desktop/tokens.txt` и переменных окружения.
