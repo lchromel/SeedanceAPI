@@ -1588,12 +1588,19 @@ HTML = """<!doctype html>
 
         <section class="form-section asset-library">
           <div class="section-heading">
-            <div>
-              <h2>Asset library</h2>
-              <p>Saved files are loaded automatically when the page opens</p>
+            <h2>Assets</h2>
+            <div class="library-toolbar">
+              <span class="library-count" id="privateAssetCount">…</span>
+              <button type="button" class="secondary library-refresh" id="refreshAssetsBtn" aria-label="Обновить ассеты" title="Обновить ассеты">↻</button>
             </div>
-            <span class="status-pill idle" id="assetApiStatus">checking</span>
           </div>
+          <div class="private-asset-list" id="privateAssetList" aria-label="Выбор ассетов" aria-live="polite" aria-busy="true">
+            <div class="empty asset-empty">Загружаю ассеты…</div>
+          </div>
+          <details class="library-advanced">
+            <summary>Дополнительно</summary>
+            <div class="library-advanced-content">
+          <span class="status-pill idle" id="assetApiStatus">checking</span>
           <div class="asset-subheading-row">
             <h3 class="asset-subheading">Uploaded materials</h3>
             <span class="library-count" id="materialCount">loading</span>
@@ -1613,7 +1620,6 @@ HTML = """<!doctype html>
           </div>
           <div class="asset-actions">
             <button type="button" class="secondary" id="startVerificationBtn">Verify a person</button>
-            <button type="button" class="secondary" id="refreshAssetsBtn">Refresh library</button>
           </div>
           <p class="asset-help" id="assetHelp">Real-person verification creates one private group per person.</p>
           <div class="asset-upload-row material-upload-row">
@@ -1635,13 +1641,8 @@ HTML = """<!doctype html>
             </label>
             <button type="button" class="secondary" id="addAssetByIdBtn">Use ID</button>
           </div>
-          <div class="asset-subheading-row">
-            <h3 class="asset-subheading">Verified BytePlus assets</h3>
-            <span class="library-count" id="privateAssetCount">loading</span>
-          </div>
-          <div class="private-asset-list" id="privateAssetList" aria-live="polite" aria-busy="true">
-            <div class="empty asset-empty">Проверяю приватную библиотеку…</div>
-          </div>
+            </div>
+          </details>
         </section>
 
         <section class="form-section settings-section">
@@ -2281,6 +2282,11 @@ input[type="range"]::-moz-range-thumb {
 
 .library-count.error { color: var(--bad); }
 
+.library-toolbar { display: flex; align-items: center; gap: 12px; }
+.library-toolbar .library-refresh { padding: 0; width: 36px; min-height: 36px; font-size: 22px; }
+.library-advanced summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+.library-advanced-content { display: grid; gap: 16px; padding-top: 16px; }
+
 .material-list {
   display: grid;
   gap: 8px;
@@ -2291,9 +2297,9 @@ input[type="range"]::-moz-range-thumb {
 .private-asset-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  grid-auto-rows: max-content;
+  align-content: start;
   gap: 10px;
-  max-height: 420px;
-  overflow: auto;
   padding: 2px;
 }
 
@@ -2378,6 +2384,9 @@ input[type="range"]::-moz-range-thumb {
   position: relative;
   display: block;
   min-height: 0;
+  min-width: 0;
+  width: 100%;
+  height: auto;
   aspect-ratio: 1;
   padding: 0;
   overflow: hidden;
@@ -2410,6 +2419,8 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .private-asset-list .private-asset-preview {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   border-radius: 0;
@@ -2817,7 +2828,7 @@ function addPrivateAssetReference(asset) {
     renderReferencePreview();
     referenceIndex = mediaRefs.filter((ref) => ref.kind === (type === "audio" ? "audio" : "video")).length;
   }
-  setUploadStatus(`${asset.AssetType || "Asset"} добавлен как ${uri}. Укажите его в prompt как ${type} ${referenceIndex}.`);
+  setUploadStatus(`Добавлен ${type} ${referenceIndex}.`);
   renderPrivateAssets();
   renderMaterials();
 }
@@ -2839,7 +2850,7 @@ function removePrivateAssetReference(asset) {
     syncMediaUrlsFields();
     renderReferencePreview();
   }
-  setUploadStatus(`${asset.Name || asset.Id || "Asset"} удалён из references.`);
+  setUploadStatus("Выбор ассета снят.");
   renderPrivateAssets();
   renderMaterials();
 }
@@ -3162,7 +3173,8 @@ function renderPrivateAssets() {
   privateAssetList.replaceChildren();
   const assets = state.privateAssets || [];
   if (privateAssetCount) {
-    privateAssetCount.textContent = `${assets.length} available`;
+    const selectedCount = assets.filter(privateAssetIsAdded).length;
+    privateAssetCount.textContent = selectedCount ? `${selectedCount} / ${assets.length}` : String(assets.length);
     privateAssetCount.className = "library-count";
   }
   if (!assets.length) {
