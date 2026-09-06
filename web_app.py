@@ -2281,12 +2281,24 @@ input[type="range"]::-moz-range-thumb {
 
 .library-count.error { color: var(--bad); }
 
-.private-asset-list,
 .material-list {
   display: grid;
   gap: 8px;
   max-height: 320px;
   overflow: auto;
+}
+
+.private-asset-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 10px;
+  max-height: 420px;
+  overflow: auto;
+  padding: 2px;
+}
+
+.private-asset-list > .asset-empty {
+  grid-column: 1 / -1;
 }
 
 .private-asset-card {
@@ -2360,6 +2372,72 @@ input[type="range"]::-moz-range-thumb {
   color: var(--good);
   border-color: rgba(52, 211, 153, .3);
   background: rgba(52, 211, 153, .08);
+}
+
+.private-asset-list .private-asset-card {
+  position: relative;
+  display: block;
+  min-height: 0;
+  aspect-ratio: 1;
+  padding: 0;
+  overflow: hidden;
+  border: 2px solid transparent;
+  border-radius: 12px;
+  background: var(--field);
+  cursor: pointer;
+  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+
+.private-asset-list .private-asset-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, .2);
+}
+
+.private-asset-list .private-asset-card:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
+}
+
+.private-asset-list .private-asset-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(124, 58, 237, .28);
+}
+
+.private-asset-list .private-asset-card.unavailable {
+  cursor: not-allowed;
+  opacity: .45;
+  filter: grayscale(.6);
+}
+
+.private-asset-list .private-asset-preview {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+}
+
+.asset-selected-mark {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 2px solid rgba(255, 255, 255, .85);
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1;
+  opacity: 0;
+  transform: scale(.78);
+  transition: opacity .16s ease, transform .16s ease;
+}
+
+.private-asset-card.selected .asset-selected-mark {
+  opacity: 1;
+  transform: scale(1);
 }
 
 .asset-empty {
@@ -2531,8 +2609,9 @@ pre {
 @media (max-width: 620px) {
   .two, .four { grid-template-columns: 1fr; }
   .material-upload-row, .asset-id-row { grid-template-columns: 1fr; }
-  .private-asset-card { grid-template-columns: 54px minmax(0, 1fr); }
-  .asset-card-actions { grid-column: 1 / -1; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); }
+  .material-list .private-asset-card { grid-template-columns: 54px minmax(0, 1fr); }
+  .material-list .asset-card-actions { grid-column: 1 / -1; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); }
+  .private-asset-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .upload-grid, .image-reference-list, .reference-preview { grid-template-columns: 1fr; }
   .topbar, .result-head { display: grid; }
   .actions { display: grid; }
@@ -2741,6 +2820,37 @@ function addPrivateAssetReference(asset) {
   setUploadStatus(`${asset.AssetType || "Asset"} добавлен как ${uri}. Укажите его в prompt как ${type} ${referenceIndex}.`);
   renderPrivateAssets();
   renderMaterials();
+}
+
+function removePrivateAssetReference(asset) {
+  const uri = privateAssetUri(asset);
+  if (!uri) return;
+  const imageIndex = imageRefs.findIndex((ref) => ref.url === uri);
+  if (imageIndex >= 0) {
+    disposeImageRef(imageRefs[imageIndex]);
+    imageRefs.splice(imageIndex, 1);
+    syncImageUrlsField();
+    renderImageReferences();
+  }
+  const mediaIndex = mediaRefs.findIndex((ref) => ref.url === uri);
+  if (mediaIndex >= 0) {
+    disposeMediaRef(mediaRefs[mediaIndex]);
+    mediaRefs.splice(mediaIndex, 1);
+    syncMediaUrlsFields();
+    renderReferencePreview();
+  }
+  setUploadStatus(`${asset.Name || asset.Id || "Asset"} удалён из references.`);
+  renderPrivateAssets();
+  renderMaterials();
+}
+
+function togglePrivateAssetReference(asset) {
+  if (String(asset.Status || "").toLowerCase() !== "active") return;
+  if (privateAssetIsAdded(asset)) {
+    removePrivateAssetReference(asset);
+  } else {
+    addPrivateAssetReference(asset);
+  }
 }
 
 function normalizeAssetUri(value) {
@@ -3064,51 +3174,47 @@ function renderPrivateAssets() {
   }
   assets.forEach((asset) => {
     const card = document.createElement("article");
-    card.className = "private-asset-card";
+    const active = String(asset.Status || "").toLowerCase() === "active";
+    const added = privateAssetIsAdded(asset);
+    card.className = `private-asset-card${added ? " selected" : ""}${active ? "" : " unavailable"}`;
+    card.tabIndex = active ? 0 : -1;
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-pressed", String(added));
+    card.setAttribute("aria-disabled", String(!active));
+    card.setAttribute(
+      "aria-label",
+      `${added ? "Убрать" : "Выбрать"} ассет ${asset.Name || asset.Id || "без названия"}`
+    );
+    card.title = asset.Name || asset.Id || "Asset";
     const preview = document.createElement("div");
     preview.className = "private-asset-preview";
     const type = String(asset.AssetType || "Asset");
     if (asset.URL && type.toLowerCase() === "image") {
       const img = document.createElement("img");
       img.src = asset.URL;
-      img.alt = asset.Name || asset.Id;
+      img.alt = "";
+      img.loading = "lazy";
       preview.appendChild(img);
     } else if (asset.URL && type.toLowerCase() === "video") {
       const video = document.createElement("video");
       video.src = asset.URL;
       video.muted = true;
+      video.playsInline = true;
       preview.appendChild(video);
     } else {
       preview.textContent = type;
     }
-    const meta = document.createElement("div");
-    meta.className = "private-asset-meta";
-    const title = document.createElement("strong");
-    title.textContent = asset.Name || asset.Id || "Unnamed asset";
-    const detail = document.createElement("small");
-    detail.textContent = `${type} · ${asset.Status || "Unknown"} · ${asset.Id || ""}`;
-    meta.append(title, detail);
-    const actions = document.createElement("div");
-    actions.className = "asset-card-actions";
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "secondary";
-    const active = String(asset.Status || "").toLowerCase() === "active";
-    const added = privateAssetIsAdded(asset);
-    button.disabled = !active || added;
-    button.textContent = added ? "Added" : active ? "Use" : asset.Status || "Processing";
-    if (added) button.classList.add("added");
-    button.addEventListener("click", () => addPrivateAssetReference(asset));
-    actions.appendChild(button);
-    if (active && asset.Id) {
-      const copyButton = document.createElement("button");
-      copyButton.type = "button";
-      copyButton.className = "secondary";
-      copyButton.textContent = "Copy ID";
-      copyButton.addEventListener("click", () => copyAssetId(asset.Id));
-      actions.appendChild(copyButton);
-    }
-    card.append(preview, meta, actions);
+    const selectedMark = document.createElement("span");
+    selectedMark.className = "asset-selected-mark";
+    selectedMark.textContent = "✓";
+    selectedMark.setAttribute("aria-hidden", "true");
+    card.addEventListener("click", () => togglePrivateAssetReference(asset));
+    card.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      togglePrivateAssetReference(asset);
+    });
+    card.append(preview, selectedMark);
     privateAssetList.appendChild(card);
   });
 }
