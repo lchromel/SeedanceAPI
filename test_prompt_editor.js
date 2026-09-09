@@ -22,7 +22,7 @@ function editor() {
   });
   vm.runInContext(source, context);
   vm.runInContext(`
-    state.config = {promptEnhancer: {enabled: true, maxPromptLength: 12000}};
+    state.config = {promptEnhancer: {enabled: true, maxPromptLength: 12000, maxPreferencesLength: 4000}};
     durationEl.value = "10";
     ratioEl.value = "16:9";
     promptEditor.textContent = "Кот смотрит в окно";
@@ -37,13 +37,22 @@ function editor() {
 async function main() {
   {
     const app = editor();
-    app.run(`apiFetch = async () => ({prompt: "Кот смотрит в окно.\\nКамера приближается."});`);
+    app.run(`promptPreferences.value = "Холодный свет, статичная камера";
+      var submitted;
+      apiFetch = async (url, options) => {
+        submitted = JSON.parse(options.body);
+        return {prompt: "A cat looks out of the window.\\nCool window light, locked camera."};
+      };`);
     await app.run("enhancePrompt()");
-    assert.equal(app.element("#promptEditor").textContent, "Кот смотрит в окно.\nКамера приближается.");
+    assert.equal(app.element("#promptEditor").textContent, "A cat looks out of the window.\nCool window light, locked camera.");
+    assert.equal(app.run("submitted.preferences"), "Холодный свет, статичная камера");
+    assert.equal(app.element("#promptPreferences").value, "Холодный свет, статичная камера");
+    assert.equal(app.element("#enhancePromptStatus").hidden, true);
     assert.equal(app.element("#undoPromptBtn").hidden, false);
     app.run("undoPromptEnhancement()");
     assert.equal(app.element("#promptEditor").textContent, "Кот смотрит в окно");
     assert.equal(app.element("#undoPromptBtn").hidden, true);
+    assert.equal(app.element("#promptPreferences").value, "Холодный свет, статичная камера");
   }
   {
     const app = editor();
@@ -51,11 +60,13 @@ async function main() {
     await app.run("enhancePrompt()");
     assert.equal(app.element("#promptEditor").textContent, "Кот смотрит в окно");
     assert.equal(app.element("#enhancePromptStatus").textContent, "BytePlus unavailable");
+    assert.equal(app.element("#enhancePromptStatus").hidden, false);
     assert.equal(app.element("#enhancePromptBtn").disabled, false);
   }
   for (const change of [
     'promptEditor.textContent = "Мои новые правки"; promptRevision += 1;',
     'durationEl.value = "20";',
+    'promptPreferences.value = "Добавь плавный отъезд камеры";',
     'imageRefs.push({id: "new-reference", url: "asset://hero"});',
     'setMode("image"); setMode("video");'
   ]) {
@@ -82,6 +93,27 @@ async function main() {
     await pending;
     app.run('promptEditor.textContent = "Ручная правка после улучшения"; undoPromptEnhancement();');
     assert.equal(app.element("#promptEditor").textContent, "Ручная правка после улучшения");
+  }
+  {
+    const app = editor();
+    app.run('promptPreferences.value = "x".repeat(4001); var calls = 0; apiFetch = async () => { calls += 1; };');
+    await app.run("enhancePrompt()");
+    assert.equal(app.run("calls"), 0);
+    assert.equal(app.element("#enhancePromptStatus").hidden, false);
+    assert.match(app.element("#enhancePromptStatus").textContent, /4 000/);
+  }
+  {
+    const app = editor();
+    app.run(`var submitted;
+      apiFetch = async (url, options) => {
+        submitted = JSON.parse(options.body);
+        return {prompt: "A cat watches the street. Locked camera."};
+      };`);
+    await app.run("enhancePrompt()");
+    app.run('promptPreferences.value = "Теперь плавно приблизить камеру";');
+    await app.run("enhancePrompt()");
+    assert.equal(app.run("submitted.prompt"), "A cat watches the street. Locked camera.");
+    assert.equal(app.run("submitted.preferences"), "Теперь плавно приблизить камеру");
   }
   {
     const app = editor();

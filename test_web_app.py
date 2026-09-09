@@ -59,7 +59,7 @@ class PromptEnhancementTests(unittest.TestCase):
         handler.rfile = io.BytesIO(body)
         handler.headers["Content-Length"] = str(len(body))
         if response is None:
-            response = {"choices": [{"finish_reason": "stop", "message": {"content": "Кот прыгает на подоконник. Камера следует за движением."}}]}
+            response = {"choices": [{"finish_reason": "stop", "message": {"content": "A cat jumps onto the windowsill. The camera follows its movement."}}]}
         with mock.patch.object(web_app, "get_secret", side_effect=lambda names: key if names == web_app.PROVIDERS["byteplus"]["token_names"] else ""), \
                 mock.patch.object(web_app, "request_json", return_value=(status, response), side_effect=error) as request:
             web_app.SeedanceHandler.handle_enhance_prompt(handler)
@@ -69,17 +69,36 @@ class PromptEnhancementTests(unittest.TestCase):
         status, result, request = self.call_endpoint({
             "prompt": "кот прыгает", "duration": 10, "aspectRatio": "9:16",
             "generateAudio": True, "references": ["@image1"],
+            "preferences": "Один непрерывный кадр, холодный свет",
             "model": "video-endpoint", "baseUrl": "https://untrusted.example", "apiKey": "client-key",
         })
         self.assertEqual(status, 200)
-        self.assertIn("Кот", result["prompt"])
+        self.assertIn("A cat", result["prompt"])
         method, url, key, payload = request.call_args.args
         self.assertEqual((method, url, key), ("POST", "https://ark.ap-southeast.bytepluses.com/api/v3/chat/completions", "test-key"))
         self.assertEqual(payload["model"], web_app.DEEPSEEK_MODEL)
         self.assertEqual(payload["thinking"], {"type": "disabled"})
         context = json.loads(payload["messages"][1]["content"])
-        self.assertEqual(context, {"draft": "кот прыгает", "durationSeconds": 10, "aspectRatio": "9:16", "generateAudio": True, "availableReferenceTags": ["@image1"]})
+        self.assertEqual(context, {"draft": "кот прыгает", "preferences": "Один непрерывный кадр, холодный свет", "outputLanguage": "English", "durationSeconds": 10, "aspectRatio": "9:16", "generateAudio": True, "availableReferenceTags": ["@image1"]})
+        self.assertEqual(payload["messages"][0]["content"], web_app.PROMPT_ENHANCER_INSTRUCTIONS)
+        self.assertIn("Always write the final prompt in English", payload["messages"][0]["content"])
         self.assertNotIn("raw", result)
+
+    def test_preferences_are_optional_for_existing_clients(self):
+        status, _, request = self.call_endpoint({"prompt": "кот"})
+        self.assertEqual(status, 200)
+        context = json.loads(request.call_args.args[3]["messages"][1]["content"])
+        self.assertEqual(context["preferences"], "")
+
+    def test_reference_introduced_in_preferences_survives_rewrite(self):
+        data = {"prompt": "кот", "preferences": "Используй @image1 для внешности", "references": ["@image1"]}
+        response = {"choices": [{"finish_reason": "stop", "message": {"content": "Preserve the cat from @image1. It looks out of the window."}}]}
+        status, result, _ = self.call_endpoint(data, response=response)
+        self.assertEqual(status, 200)
+        self.assertIn("@image1", result["prompt"])
+        status, result, _ = self.call_endpoint(data)
+        self.assertEqual(status, 502)
+        self.assertNotIn("prompt", result)
 
     def test_dedicated_deepseek_endpoint_overrides_default(self):
         with mock.patch.dict(web_app.os.environ, {"DEEPSEEK_ENDPOINT_ID": "ep-chat", "ARK_ENDPOINT_ID": "ep-video"}):
@@ -90,7 +109,9 @@ class PromptEnhancementTests(unittest.TestCase):
                      {"prompt": "кот", "duration": 31}, {"prompt": "кот", "duration": None},
                      {"prompt": "кот", "duration": 5.5}, {"prompt": "кот", "mode": "image"},
                      {"prompt": "кот", "aspectRatio": "bad"}, {"prompt": "кот", "generateAudio": "false"},
-                     {"prompt": "кот", "references": ["https://example.com"]}]:
+                     {"prompt": "кот", "references": ["https://example.com"]},
+                     {"prompt": "кот", "preferences": None}, {"prompt": "кот", "preferences": []},
+                     {"prompt": "кот", "preferences": "x" * 4001}]:
             with self.subTest(data=str(data)[:100]):
                 status, result, request = self.call_endpoint(data)
                 self.assertEqual(status, 400)
