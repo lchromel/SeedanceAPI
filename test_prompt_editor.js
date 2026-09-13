@@ -37,6 +37,50 @@ function editor() {
 async function main() {
   {
     const app = editor();
+    app.run(`imageRefs.push(
+      {id: "location", url: "https://example.com/location.jpg"},
+      {id: "outfit", url: "asset://coat", sourceUrl: "https://example.com/coat.jpg"},
+      {id: "file", file: {name: "hero.jpg"}}
+    );
+    var uploads = 0;
+    uploadSingleReferenceFile = async () => { uploads += 1; return {url: "https://example.com/hero.jpg"}; };
+    var submitted;
+    apiFetch = async (url, options) => {
+      submitted = JSON.parse(options.body);
+      return {prompt: "Use @image1 for location, @image2 for clothing and @image3 for identity."};
+    };`);
+    await app.run("enhancePrompt()");
+    assert.deepEqual(JSON.parse(app.run("JSON.stringify(submitted.imageReferences)")), [
+      {tag: "@image1", url: "https://example.com/location.jpg"},
+      {tag: "@image2", url: "https://example.com/coat.jpg"},
+      {tag: "@image3", url: "https://example.com/hero.jpg"}
+    ]);
+    await app.run("enhancePrompt()");
+    assert.equal(app.run("uploads"), 1);
+  }
+  {
+    const app = editor();
+    app.run(`imageRefs.push({id: "pending", file: {name: "photo.jpg"}});
+      var resolveUpload; uploadSingleReferenceFile = () => new Promise(resolve => { resolveUpload = resolve; });
+      var calls = 0; apiFetch = async () => { calls += 1; };`);
+    const pending = app.run("enhancePrompt()");
+    app.run('promptPreferences.value = "Другая одежда"; resolveUpload({url: "https://example.com/photo.jpg"});');
+    await pending;
+    assert.equal(app.run("calls"), 0);
+    assert.match(app.element("#enhancePromptStatus").textContent, /изменились/);
+    assert.equal(app.element("#promptEditor").textContent, "Кот смотрит в окно");
+  }
+  {
+    const app = editor();
+    app.run(`imageRefs.push({id: "missing", url: "asset://missing"});
+      var calls = 0; apiFetch = async () => { calls += 1; };`);
+    await app.run("enhancePrompt()");
+    assert.equal(app.run("calls"), 0);
+    assert.match(app.element("#enhancePromptStatus").textContent, /исходного изображения/);
+    assert.equal(app.element("#promptEditor").textContent, "Кот смотрит в окно");
+  }
+  {
+    const app = editor();
     app.run(`promptPreferences.value = "Холодный свет, статичная камера";
       var submitted;
       apiFetch = async (url, options) => {

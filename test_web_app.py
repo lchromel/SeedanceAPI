@@ -53,6 +53,59 @@ class ImageGenerationTests(unittest.TestCase):
 
 
 class PromptEnhancementTests(unittest.TestCase):
+    def test_all_photos_are_seen_before_deepseek_and_bound_to_tags(self):
+        images = [
+            {"tag": "@image1", "url": "https://example.com/location.jpg"},
+            {"tag": "@image2", "url": "https://example.com/outfit.jpg"},
+        ]
+        descriptions = [
+            {"tag": "@image1", "role": "location", "description": "Stone courtyard with blue doors."},
+            {"tag": "@image2", "role": "clothing", "description": "Red wool coat with brass buttons."},
+        ]
+        vision = {"choices": [{"finish_reason": "stop", "message": {"content": json.dumps({"images": descriptions})}}]}
+        final = "The subject wears the red wool coat from @image2 in the stone courtyard from @image1."
+        rewrite = {"choices": [{"finish_reason": "stop", "message": {"content": final}}]}
+        status, result, request = self.call_endpoint({
+            "prompt": "герой идёт", "references": ["@image1", "@image2"], "imageReferences": images,
+        }, error=[(200, vision), (200, rewrite)])
+        self.assertEqual(status, 200)
+        self.assertEqual(result["prompt"], final)
+        self.assertEqual(request.call_count, 2)
+        vision_payload = request.call_args_list[0].args[3]
+        self.assertEqual(vision_payload["model"], web_app.REFERENCE_VISION_MODEL)
+        blocks = vision_payload["messages"][1]["content"]
+        self.assertEqual([b["image_url"]["url"] for b in blocks if b["type"] == "image_url"], [i["url"] for i in images])
+        self.assertEqual([b["text"] for b in blocks[1:] if b["type"] == "text"], ["@image1", "@image2"])
+        context = json.loads(request.call_args_list[1].args[3]["messages"][1]["content"])
+        self.assertEqual(context["imageDescriptions"], descriptions)
+
+    def test_incomplete_analysis_and_dropped_photo_do_not_replace_prompt(self):
+        data = {"prompt": "герой", "references": ["@image1", "@image2"], "imageReferences": [
+            {"tag": tag, "url": "https://example.com/photo.jpg"} for tag in ("@image1", "@image2")
+        ]}
+        def vision(items):
+            return {"choices": [{"finish_reason": "stop", "message": {"content": json.dumps({"images": items})}}]}
+        for items in ([], [{"tag": "@image1", "role": "location", "description": "Courtyard"}],
+                      [{"tag": "@image1", "role": "location", "description": "Courtyard"}] * 2):
+            status, result, request = self.call_endpoint(data, response=vision(items))
+            self.assertEqual(status, 502)
+            self.assertNotIn("prompt", result)
+            self.assertEqual(request.call_count, 1)
+        items = [{"tag": tag, "role": "reference", "description": "Courtyard"} for tag in data["references"]]
+        rewrite = {"choices": [{"finish_reason": "stop", "message": {"content": "Use @image1 as location."}}]}
+        status, result, _ = self.call_endpoint(data, error=[(200, vision(items)), (200, rewrite)])
+        self.assertEqual(status, 502)
+        self.assertNotIn("prompt", result)
+
+    def test_invalid_photo_sources_and_missing_photos_never_call_provider(self):
+        for images in (None, [None], [], [{"tag": "@image1", "url": "asset://hero"}],
+                       [{"tag": "@image1", "url": "file:///tmp/image.jpg"}],
+                       [{"tag": "@image2", "url": "https://example.com/a.jpg"}],
+                       [{"tag": "@image1", "url": "https://example.com/a.jpg"}] * 2):
+            status, _, request = self.call_endpoint({"prompt": "герой", "references": ["@image1"], "imageReferences": images})
+            self.assertEqual(status, 400)
+            request.assert_not_called()
+
     def call_endpoint(self, data, response=None, status=200, key="test-key", error=None):
         handler = FakeHandler()
         body = json.dumps(data).encode()
