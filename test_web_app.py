@@ -28,6 +28,33 @@ class FakeHandler:
         pass
 
 
+class VideoReferenceTests(unittest.TestCase):
+    def test_adding_images_does_not_drop_video_or_audio_references(self):
+        for count in (3, 4, 5, 9, 10, 30):
+            with self.subTest(images=count), mock.patch.object(
+                web_app, "remote_image_as_data_url", side_effect=lambda url: url
+            ):
+                images = [f"asset://image-{i}" for i in range(count)]
+                videos = [f"https://example.com/video-{i}.mp4" for i in range(4)]
+                audios = [f"https://example.com/audio-{i}.mp3" for i in range(4)]
+                payload = web_app.build_submit_payload("byteplus", {
+                    "prompt": "Use @image1 for appearance and @video1 for motion.",
+                    "imageUrls": images, "videoUrls": videos, "audioUrls": audios,
+                })
+                self.assertEqual(payload["content"][0]["type"], "text")
+                for kind, expected in (("image", images), ("video", videos), ("audio", audios)):
+                    refs = [item for item in payload["content"] if item["type"] == f"{kind}_url"]
+                    self.assertEqual([item[f"{kind}_url"]["url"] for item in refs], expected)
+                    self.assertTrue(all(item["role"] == f"reference_{kind}" for item in refs))
+
+    def test_first_and_last_frame_roles_are_preserved(self):
+        with mock.patch.object(web_app, "remote_image_as_data_url", side_effect=lambda url: url):
+            payload = web_app.build_submit_payload("byteplus", {
+                "prompt": "A coastline", "firstFrameUrl": "asset://first", "lastFrameUrl": "asset://last",
+            })
+        self.assertEqual([item.get("role") for item in payload["content"][1:]], ["first_frame", "last_frame"])
+
+
 class ImageGenerationTests(unittest.TestCase):
     def test_text_only_generation_needs_no_assets(self):
         payload = web_app.build_image_payload("byteplus", {"prompt": "A coastline"})
