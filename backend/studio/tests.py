@@ -493,3 +493,51 @@ class PostgresConcurrencyTests(TransactionTestCase):
             results = list(pool.map(lambda _: self.launch(self.projects[0].id, key), range(2)))
         self.assertEqual(results[0], results[1])
         self.assertEqual(Run.objects.count(), 1)
+
+@override_settings(S3_BUCKET="private-test")
+class PrivateMediaTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user("media-owner")
+        self.other = get_user_model().objects.create_user("media-other")
+        self.key = f"{self.user.pk}/assets/image.jpg"
+        Asset.objects.create(owner=self.user, kind="character", name="Image", key=self.key, mime="image/jpeg")
+        self.client = APIClient()
+
+    def test_browser_urls_hide_storage_but_provider_urls_remain_signed(self):
+        from . import storage
+        with patch("studio.storage.client") as s3:
+            self.assertEqual(storage.url(self.key), f"/api/media/{self.key}")
+            s3.assert_not_called()
+            storage.url(self.key, provider=True)
+            s3.return_value.generate_presigned_url.assert_called_once_with(
+                "get_object", Params={"Bucket": "private-test", "Key": self.key}, ExpiresIn=3600
+            )
+
+    def test_anonymous_other_user_and_unknown_key_never_access_s3(self):
+        with patch("studio.storage.client") as s3:
+            self.assertEqual(self.client.get(f"/api/media/{self.key}").status_code, 403)
+            self.client.force_authenticate(self.other)
+            self.assertEqual(self.client.get(f"/api/media/{self.key}").status_code, 404)
+            self.client.force_authenticate(self.user)
+            self.assertEqual(self.client.get(f"/api/media/{self.user.pk}/unknown").status_code, 404)
+            s3.assert_not_called()
+
+    def test_range_stream_and_head_hide_upstream_headers(self):
+        from botocore.response import StreamingBody
+        self.client.force_authenticate(self.user)
+        with patch("studio.storage.client") as s3:
+            body = StreamingBody(io.BytesIO(b"abc"), 3)
+            s3.return_value.get_object.return_value = {
+                "Body": body, "ContentLength": 3, "ContentType": "video/mp4", "ContentRange": "bytes 2-4/10"
+            }
+            response = self.client.get(f"/api/media/{self.key}", HTTP_RANGE="bytes=2-4")
+            self.assertEqual(response.status_code, 206)
+            self.assertEqual(b"".join(response.streaming_content), b"abc")
+            self.assertEqual(response["Content-Range"], "bytes 2-4/10")
+            self.assertEqual(response["Cache-Control"], "no-store")
+            self.assertNotIn("Location", response)
+            s3.return_value.get_object.assert_called_once_with(Bucket="private-test", Key=self.key, Range="bytes=2-4")
+            s3.return_value.head_object.return_value = {"ContentLength": 10, "ContentType": "video/mp4"}
+            self.assertEqual(self.client.head(f"/api/media/{self.key}").status_code, 200)
+            self.assertEqual(s3.return_value.get_object.call_count, 1)
+            self.assertEqual(self.client.get(f"/api/media/{self.key}", HTTP_RANGE="bytes=1-2,4-5").status_code, 416)

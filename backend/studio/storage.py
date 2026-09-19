@@ -1,4 +1,5 @@
 import boto3
+from urllib.parse import quote
 from django.conf import settings
 
 
@@ -38,15 +39,13 @@ def fetch(key, target):
 def url(key, provider=False, download=False):
     if not key:
         return None
-    if settings.S3_BUCKET:
+    if settings.S3_BUCKET and provider:
         params = {"Bucket": settings.S3_BUCKET, "Key": key}
-        if download:
-            params["ResponseContentDisposition"] = 'attachment; filename="video.mp4"'
         return client().generate_presigned_url(
             "get_object",
             Params=params,
-            ExpiresIn=3600 if provider else 300,
+            ExpiresIn=3600,
         )
     if provider:
         raise RuntimeError("External generation requires S3 storage")
-    return "/api/media/" + key + ("?download=1" if download else "")
+    return "/api/media/" + quote(key, safe="/") + ("?download=1" if download else "")

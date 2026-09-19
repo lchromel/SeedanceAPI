@@ -1,11 +1,13 @@
 import io
+import re
 import tempfile
 import uuid
 from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction, connection, DatabaseError
-from django.http import FileResponse, Http404, HttpResponse, JsonResponse
+from django.http import FileResponse, Http404, HttpResponse, JsonResponse, StreamingHttpResponse
+from botocore.exceptions import ClientError
 from django.shortcuts import get_object_or_404
 from PIL import Image, UnidentifiedImageError
 from rest_framework.decorators import api_view
@@ -276,9 +278,58 @@ def upload(request):
     return Response(asset_data(asset), status=201)
 
 
-@api_view(["GET"])
+@api_view(["GET", "HEAD"])
 def local_media(request, key):
-    if not settings.DEBUG or settings.S3_BUCKET or not key.startswith(f"{request.user.id}/"):
+    if not key.startswith(f"{request.user.id}/"):
+        raise Http404
+    if settings.S3_BUCKET:
+        owned = (
+            Asset.objects.filter(owner=request.user, key=key).exists()
+            or Run.objects.filter(project__owner=request.user, output_key=key).exists()
+            or Chunk.objects.filter(run__project__owner=request.user, output_key=key).exists()
+        )
+        if not owned:
+            raise Http404
+        params = {"Bucket": settings.S3_BUCKET, "Key": key}
+        byte_range = request.headers.get("Range")
+        if byte_range and request.method != "HEAD":
+            if not re.fullmatch(r"bytes=(?:\d+-\d*|-\d+)", byte_range):
+                return HttpResponse(status=416)
+            params["Range"] = byte_range
+        try:
+            result = (
+                storage.client().head_object(**params)
+                if request.method == "HEAD"
+                else storage.client().get_object(**params)
+            )
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code")
+            if code in {"NoSuchKey", "404", "AccessDenied"}:
+                raise Http404 from None
+            return HttpResponse(status=416 if code == "InvalidRange" else 502)
+        if request.method == "HEAD":
+            response = HttpResponse()
+        else:
+            body = result["Body"]
+
+            def stream():
+                try:
+                    yield from body.iter_chunks(chunk_size=64 * 1024)
+                finally:
+                    body.close()
+
+            response = StreamingHttpResponse(stream(), status=206 if "ContentRange" in result else 200)
+            response._resource_closers.append(body.close)
+        response["Content-Type"] = result.get("ContentType", "application/octet-stream")
+        response["Content-Length"] = result["ContentLength"]
+        response["Accept-Ranges"] = "bytes"
+        if "ContentRange" in result:
+            response["Content-Range"] = result["ContentRange"]
+        response["Cross-Origin-Resource-Policy"] = "same-origin"
+        if request.GET.get("download") == "1":
+            response["Content-Disposition"] = 'attachment; filename="video.mp4"'
+        return response
+    if not settings.DEBUG:
         raise Http404
     path = (settings.MEDIA_ROOT / key).resolve()
     if not path.is_relative_to(settings.MEDIA_ROOT.resolve()) or not path.is_file():
