@@ -1,0 +1,12 @@
+.git
+.venv
+**/__pycache__
+**/node_modules
+**/dist
+**/*.sqlite3
+**/.media
+**/staticfiles
+.env*
+.auth
+uploads
+downloads

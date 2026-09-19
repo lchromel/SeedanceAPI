@@ -4,3 +4,16 @@ __pycache__/
 .env
 downloads/
 uploads/
+
+.auth/
+.venv/
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+backend/*.sqlite3
+backend/.media/
+backend/staticfiles/
+.env.*
+!.env.example
+
+.ruff_cache/

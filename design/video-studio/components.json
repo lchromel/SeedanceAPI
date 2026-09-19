@@ -1,0 +1,1148 @@
+{
+  "fileKey": "ShN67dGIwD1KCI4ZoTfUyg",
+  "kitPage": "58:4",
+  "scenariosPage": "9:2",
+  "components": [
+    {
+      "id": "60:4",
+      "name": "Icon/Menu",
+      "type": "COMPONENT",
+      "description": "Icon/Menu — reusable Video Studio UI component.",
+      "properties": {}
+    },
+    {
+      "id": "60:8",
+      "name": "Icon/Person",
+      "type": "COMPONENT",
+      "description": "Icon/Person — reusable Video Studio UI component.",
+      "properties": {}
+    },
+    {
+      "id": "60:11",
+      "name": "Icon/Shirt",
+      "type": "COMPONENT",
+      "description": "Icon/Shirt — reusable Video Studio UI component.",
+      "properties": {}
+    },
+    {
+      "id": "60:15",
+      "name": "Icon/Location",
+      "type": "COMPONENT",
+      "description": "Icon/Location — reusable Video Studio UI component.",
+      "properties": {}
+    },
+    {
+      "id": "60:18",
+      "name": "Icon/Play",
+      "type": "COMPONENT",
+      "description": "Icon/Play — reusable Video Studio UI component.",
+      "properties": {}
+    },
+    {
+      "id": "60:21",
+      "name": "Icon/Plus",
+      "type": "COMPONENT",
+      "description": "Icon/Plus — reusable Video Studio UI component.",
+      "properties": {}
+    },
+    {
+      "id": "60:24",
+      "name": "Icon/Download",
+      "type": "COMPONENT",
+      "description": "Icon/Download — reusable Video Studio UI component.",
+      "properties": {}
+    },
+    {
+      "id": "60:27",
+      "name": "Icon/Check",
+      "type": "COMPONENT",
+      "description": "Icon/Check — reusable Video Studio UI component.",
+      "properties": {}
+    },
+    {
+      "id": "60:30",
+      "name": "Icon/Close",
+      "type": "COMPONENT",
+      "description": "Icon/Close — reusable Video Studio UI component.",
+      "properties": {}
+    },
+    {
+      "id": "60:33",
+      "name": "Icon/Chevron",
+      "type": "COMPONENT",
+      "description": "Icon/Chevron — reusable Video Studio UI component.",
+      "properties": {}
+    },
+    {
+      "id": "61:26",
+      "name": "Button",
+      "type": "COMPONENT_SET",
+      "description": "Action button. Props: variant primary|secondary, state default|hover|pressed|focus|disabled|loading, label. Width is controlled by the parent; minimum height 44.",
+      "properties": {
+        "Label#61:0": {
+          "type": "TEXT",
+          "defaultValue": "Button"
+        },
+        "Variant": {
+          "type": "VARIANT",
+          "defaultValue": "Primary",
+          "variantOptions": [
+            "Primary",
+            "Secondary"
+          ]
+        },
+        "State": {
+          "type": "VARIANT",
+          "defaultValue": "Default",
+          "variantOptions": [
+            "Default",
+            "Hover",
+            "Pressed",
+            "Focus",
+            "Disabled",
+            "Loading"
+          ]
+        }
+      },
+      "variants": [
+        {
+          "id": "60:36",
+          "name": "Variant=Primary, State=Default",
+          "properties": {
+            "Variant": "Primary",
+            "State": "Default"
+          }
+        },
+        {
+          "id": "61:2",
+          "name": "Variant=Primary, State=Hover",
+          "properties": {
+            "Variant": "Primary",
+            "State": "Hover"
+          }
+        },
+        {
+          "id": "61:4",
+          "name": "Variant=Primary, State=Pressed",
+          "properties": {
+            "Variant": "Primary",
+            "State": "Pressed"
+          }
+        },
+        {
+          "id": "61:6",
+          "name": "Variant=Primary, State=Focus",
+          "properties": {
+            "Variant": "Primary",
+            "State": "Focus"
+          }
+        },
+        {
+          "id": "61:8",
+          "name": "Variant=Primary, State=Disabled",
+          "properties": {
+            "Variant": "Primary",
+            "State": "Disabled"
+          }
+        },
+        {
+          "id": "61:10",
+          "name": "Variant=Primary, State=Loading",
+          "properties": {
+            "Variant": "Primary",
+            "State": "Loading"
+          }
+        },
+        {
+          "id": "61:13",
+          "name": "Variant=Secondary, State=Default",
+          "properties": {
+            "Variant": "Secondary",
+            "State": "Default"
+          }
+        },
+        {
+          "id": "61:15",
+          "name": "Variant=Secondary, State=Hover",
+          "properties": {
+            "Variant": "Secondary",
+            "State": "Hover"
+          }
+        },
+        {
+          "id": "61:17",
+          "name": "Variant=Secondary, State=Pressed",
+          "properties": {
+            "Variant": "Secondary",
+            "State": "Pressed"
+          }
+        },
+        {
+          "id": "61:19",
+          "name": "Variant=Secondary, State=Focus",
+          "properties": {
+            "Variant": "Secondary",
+            "State": "Focus"
+          }
+        },
+        {
+          "id": "61:21",
+          "name": "Variant=Secondary, State=Disabled",
+          "properties": {
+            "Variant": "Secondary",
+            "State": "Disabled"
+          }
+        },
+        {
+          "id": "61:23",
+          "name": "Variant=Secondary, State=Loading",
+          "properties": {
+            "Variant": "Secondary",
+            "State": "Loading"
+          }
+        }
+      ]
+    },
+    {
+      "id": "64:130",
+      "name": "ScriptField",
+      "type": "COMPONENT_SET",
+      "description": "",
+      "properties": {
+        "Field label#64:2": {
+          "type": "TEXT",
+          "defaultValue": "Action"
+        },
+        "Content#64:8": {
+          "type": "TEXT",
+          "defaultValue": "Scene description"
+        },
+        "State": {
+          "type": "VARIANT",
+          "defaultValue": "Filled",
+          "variantOptions": [
+            "Filled",
+            "Empty",
+            "Focus",
+            "Error",
+            "Disabled"
+          ]
+        }
+      },
+      "variants": [
+        {
+          "id": "63:133",
+          "name": "State=Filled",
+          "properties": {
+            "State": "Filled"
+          }
+        },
+        {
+          "id": "63:134",
+          "name": "State=Empty",
+          "properties": {
+            "State": "Empty"
+          }
+        },
+        {
+          "id": "63:137",
+          "name": "State=Focus",
+          "properties": {
+            "State": "Focus"
+          }
+        },
+        {
+          "id": "63:140",
+          "name": "State=Error",
+          "properties": {
+            "State": "Error"
+          }
+        },
+        {
+          "id": "63:143",
+          "name": "State=Disabled",
+          "properties": {
+            "State": "Disabled"
+          }
+        }
+      ]
+    },
+    {
+      "id": "64:131",
+      "name": "TimelineSegment",
+      "type": "COMPONENT_SET",
+      "description": "One 30-second chunk. State: queued, generating, ready, error. Width flexes within the timeline.",
+      "properties": {
+        "State": {
+          "type": "VARIANT",
+          "defaultValue": "Ready",
+          "variantOptions": [
+            "Ready",
+            "Queued",
+            "Generating",
+            "Error"
+          ]
+        }
+      },
+      "variants": [
+        {
+          "id": "63:147",
+          "name": "State=Ready",
+          "properties": {
+            "State": "Ready"
+          }
+        },
+        {
+          "id": "63:149",
+          "name": "State=Queued",
+          "properties": {
+            "State": "Queued"
+          }
+        },
+        {
+          "id": "63:153",
+          "name": "State=Generating",
+          "properties": {
+            "State": "Generating"
+          }
+        },
+        {
+          "id": "63:156",
+          "name": "State=Error",
+          "properties": {
+            "State": "Error"
+          }
+        }
+      ]
+    },
+    {
+      "id": "65:152",
+      "name": "MediaImage",
+      "type": "COMPONENT",
+      "description": "Replace the IMAGE fill in an instance. Props in code: src, alt, aspectRatio, fit=cover. Width and height belong to the parent layout.",
+      "properties": {}
+    },
+    {
+      "id": "66:156",
+      "name": "CharacterCard",
+      "type": "COMPONENT",
+      "description": "CharacterCard — reusable Video Studio UI component.",
+      "properties": {
+        "Label#66:0": {
+          "type": "TEXT",
+          "defaultValue": "Alina"
+        }
+      }
+    },
+    {
+      "id": "66:163",
+      "name": "LocationCard",
+      "type": "COMPONENT",
+      "description": "LocationCard — reusable Video Studio UI component.",
+      "properties": {
+        "Label#66:1": {
+          "type": "TEXT",
+          "defaultValue": "Bright living room"
+        }
+      }
+    },
+    {
+      "id": "66:177",
+      "name": "WardrobeCard",
+      "type": "COMPONENT",
+      "description": "WardrobeCard — reusable Video Studio UI component.",
+      "properties": {
+        "Selected item#66:2": {
+          "type": "TEXT",
+          "defaultValue": "White T-shirt"
+        }
+      }
+    },
+    {
+      "id": "67:294",
+      "name": "DurationControl",
+      "type": "COMPONENT",
+      "description": "DurationControl — reusable Video Studio UI component.",
+      "properties": {}
+    },
+    {
+      "id": "67:301",
+      "name": "StageTabs",
+      "type": "COMPONENT",
+      "description": "StageTabs — reusable Video Studio UI component.",
+      "properties": {}
+    },
+    {
+      "id": "67:319",
+      "name": "Timeline",
+      "type": "COMPONENT",
+      "description": "Timeline — reusable Video Studio UI component.",
+      "properties": {}
+    },
+    {
+      "id": "67:324",
+      "name": "PlayerControls",
+      "type": "COMPONENT",
+      "description": "PlayerControls — reusable Video Studio UI component.",
+      "properties": {}
+    },
+    {
+      "id": "69:508",
+      "name": "MotionPresetCard",
+      "type": "COMPONENT",
+      "description": "MotionPresetCard — reusable Video Studio UI component.",
+      "properties": {
+        "Label#69:0": {
+          "type": "TEXT",
+          "defaultValue": "Turn"
+        },
+        "Maximum duration#78:0": {
+          "type": "TEXT",
+          "defaultValue": "Up to 30 s"
+        }
+      }
+    },
+    {
+      "id": "70:491",
+      "name": "IconButton",
+      "type": "COMPONENT_SET",
+      "description": "",
+      "properties": {
+        "Icon#70:0": {
+          "type": "INSTANCE_SWAP",
+          "defaultValue": "60:4",
+          "preferredValues": []
+        },
+        "Tooltip#70:1": {
+          "type": "TEXT",
+          "defaultValue": "Open menu"
+        },
+        "State": {
+          "type": "VARIANT",
+          "defaultValue": "Default",
+          "variantOptions": [
+            "Default",
+            "Hover",
+            "Selected",
+            "Focus"
+          ]
+        }
+      },
+      "variants": [
+        {
+          "id": "68:493",
+          "name": "State=Default",
+          "properties": {
+            "State": "Default"
+          }
+        },
+        {
+          "id": "69:491",
+          "name": "State=Hover",
+          "properties": {
+            "State": "Hover"
+          }
+        },
+        {
+          "id": "69:495",
+          "name": "State=Selected",
+          "properties": {
+            "State": "Selected"
+          }
+        },
+        {
+          "id": "69:499",
+          "name": "State=Focus",
+          "properties": {
+            "State": "Focus"
+          }
+        }
+      ]
+    },
+    {
+      "id": "70:529",
+      "name": "Illustration/Longsleeve",
+      "type": "COMPONENT",
+      "description": "Illustration/Longsleeve — reusable Video Studio UI component.",
+      "properties": {}
+    },
+    {
+      "id": "71:501",
+      "name": "ClothingCard",
+      "type": "COMPONENT_SET",
+      "description": "",
+      "properties": {
+        "Label#71:0": {
+          "type": "TEXT",
+          "defaultValue": "White T-shirt"
+        },
+        "Visual#71:1": {
+          "type": "INSTANCE_SWAP",
+          "defaultValue": "65:152",
+          "preferredValues": []
+        },
+        "Selected": {
+          "type": "VARIANT",
+          "defaultValue": "True",
+          "variantOptions": [
+            "True",
+            "False"
+          ]
+        }
+      },
+      "variants": [
+        {
+          "id": "69:515",
+          "name": "Selected=True",
+          "properties": {
+            "Selected": "True"
+          }
+        },
+        {
+          "id": "70:519",
+          "name": "Selected=False",
+          "properties": {
+            "Selected": "False"
+          }
+        }
+      ]
+    },
+    {
+      "id": "72:526",
+      "name": "Sidebar",
+      "type": "COMPONENT_SET",
+      "description": "",
+      "properties": {
+        "State": {
+          "type": "VARIANT",
+          "defaultValue": "Expanded",
+          "variantOptions": [
+            "Expanded",
+            "Collapsed",
+            "Empty"
+          ]
+        }
+      },
+      "variants": [
+        {
+          "id": "71:565",
+          "name": "State=Expanded",
+          "properties": {
+            "State": "Expanded"
+          }
+        },
+        {
+          "id": "71:595",
+          "name": "State=Collapsed",
+          "properties": {
+            "State": "Collapsed"
+          }
+        },
+        {
+          "id": "71:623",
+          "name": "State=Empty",
+          "properties": {
+            "State": "Empty"
+          }
+        }
+      ]
+    },
+    {
+      "id": "73:628",
+      "name": "PlayerPanel",
+      "type": "COMPONENT_SET",
+      "description": "",
+      "properties": {
+        "State": {
+          "type": "VARIANT",
+          "defaultValue": "Ready",
+          "variantOptions": [
+            "Ready",
+            "Empty"
+          ]
+        }
+      },
+      "variants": [
+        {
+          "id": "72:1109",
+          "name": "State=Ready",
+          "properties": {
+            "State": "Ready"
+          }
+        },
+        {
+          "id": "72:1139",
+          "name": "State=Empty",
+          "properties": {
+            "State": "Empty"
+          }
+        }
+      ]
+    },
+    {
+      "id": "73:1349",
+      "name": "GenerationPanel",
+      "type": "COMPONENT_SET",
+      "description": "Stage and State variants. Nested DurationControl, ScriptField and Button instances. Footer stays at the bottom using a FILL spacer. Code should derive the state from chunk jobs, not duplicate state.",
+      "properties": {
+        "Stage": {
+          "type": "VARIANT",
+          "defaultValue": "Freeform",
+          "variantOptions": [
+            "Freeform",
+            "Motion",
+            "Summary"
+          ]
+        },
+        "State": {
+          "type": "VARIANT",
+          "defaultValue": "Editing",
+          "variantOptions": [
+            "Editing",
+            "Empty",
+            "Generating",
+            "Ready",
+            "Error"
+          ]
+        }
+      },
+      "variants": [
+        {
+          "id": "73:1183",
+          "name": "Stage=Freeform, State=Editing",
+          "properties": {
+            "Stage": "Freeform",
+            "State": "Editing"
+          }
+        },
+        {
+          "id": "73:1209",
+          "name": "Stage=Freeform, State=Empty",
+          "properties": {
+            "Stage": "Freeform",
+            "State": "Empty"
+          }
+        },
+        {
+          "id": "73:1241",
+          "name": "Stage=Motion, State=Editing",
+          "properties": {
+            "Stage": "Motion",
+            "State": "Editing"
+          }
+        },
+        {
+          "id": "73:1286",
+          "name": "Stage=Freeform, State=Generating",
+          "properties": {
+            "Stage": "Freeform",
+            "State": "Generating"
+          }
+        },
+        {
+          "id": "73:1314",
+          "name": "Stage=Motion, State=Generating",
+          "properties": {
+            "Stage": "Motion",
+            "State": "Generating"
+          }
+        },
+        {
+          "id": "73:1330",
+          "name": "Stage=Summary, State=Ready",
+          "properties": {
+            "Stage": "Summary",
+            "State": "Ready"
+          }
+        },
+        {
+          "id": "73:1346",
+          "name": "Stage=Freeform, State=Error",
+          "properties": {
+            "Stage": "Freeform",
+            "State": "Error"
+          }
+        }
+      ]
+    },
+    {
+      "id": "74:918",
+      "name": "ProjectHeader",
+      "type": "COMPONENT",
+      "description": "ProjectHeader — reusable Video Studio UI component.",
+      "properties": {
+        "Project#74:0": {
+          "type": "TEXT",
+          "defaultValue": "Studio / New video"
+        },
+        "Save status#74:1": {
+          "type": "TEXT",
+          "defaultValue": "Saved"
+        }
+      }
+    },
+    {
+      "id": "74:943",
+      "name": "ClothingLibraryDialog",
+      "type": "COMPONENT",
+      "description": "Modal wardrobe library with search, categories, upload, selected card and Apply action. Props: open, category, query, selectedIds; callbacks onApply, onClose, onUpload. Dialog content only; backdrop belongs to the overlay layout.",
+      "properties": {}
+    },
+    {
+      "id": "78:247",
+      "name": "MotionSequence",
+      "type": "COMPONENT",
+      "description": "Ordered motion selections. Each item exposes a duration selector bounded by that preset maximum. Total duration equals the sum. Demo: five × 30 seconds.",
+      "properties": {
+        "Motion 1#79:0": {
+          "type": "TEXT",
+          "defaultValue": "1 · Turn"
+        },
+        "Duration 1#79:1": {
+          "type": "TEXT",
+          "defaultValue": "30 s"
+        },
+        "Motion 2#79:2": {
+          "type": "TEXT",
+          "defaultValue": "2 · Walk"
+        },
+        "Duration 2#79:3": {
+          "type": "TEXT",
+          "defaultValue": "30 s"
+        },
+        "Motion 3#79:4": {
+          "type": "TEXT",
+          "defaultValue": "3 · Detail"
+        },
+        "Duration 3#79:5": {
+          "type": "TEXT",
+          "defaultValue": "30 s"
+        },
+        "Motion 4#79:6": {
+          "type": "TEXT",
+          "defaultValue": "4 · Turn"
+        },
+        "Duration 4#79:7": {
+          "type": "TEXT",
+          "defaultValue": "30 s"
+        },
+        "Motion 5#79:8": {
+          "type": "TEXT",
+          "defaultValue": "5 · Walk"
+        },
+        "Duration 5#79:9": {
+          "type": "TEXT",
+          "defaultValue": "30 s"
+        }
+      }
+    },
+    {
+      "id": "88:214",
+      "name": "ChunkStatusRow",
+      "type": "COMPONENT_SET",
+      "description": "Time range + State (Ready, Generating, Queued, Error). Fixed row height 36px; parent width fills.",
+      "properties": {
+        "Time range#88:0": {
+          "type": "TEXT",
+          "defaultValue": "01:30 — 02:00"
+        },
+        "State": {
+          "type": "VARIANT",
+          "defaultValue": "Ready",
+          "variantOptions": [
+            "Ready",
+            "Generating",
+            "Queued",
+            "Error"
+          ]
+        }
+      },
+      "variants": [
+        {
+          "id": "88:204",
+          "name": "State=Ready",
+          "properties": {
+            "State": "Ready"
+          }
+        },
+        {
+          "id": "88:205",
+          "name": "State=Generating",
+          "properties": {
+            "State": "Generating"
+          }
+        },
+        {
+          "id": "88:208",
+          "name": "State=Queued",
+          "properties": {
+            "State": "Queued"
+          }
+        },
+        {
+          "id": "88:211",
+          "name": "State=Error",
+          "properties": {
+            "State": "Error"
+          }
+        }
+      ]
+    },
+    {
+      "id": "88:231",
+      "name": "ChunkStatusList",
+      "type": "COMPONENT",
+      "description": "A list of ChunkStatusRow instances. 20px padding, 8px gap, 36px rows. Height hugs visible rows. Boolean properties control five row slots; nested rows expose range and state.",
+      "properties": {
+        "Show row 1#88:5": {
+          "type": "BOOLEAN",
+          "defaultValue": true
+        },
+        "Show row 2#88:6": {
+          "type": "BOOLEAN",
+          "defaultValue": true
+        },
+        "Show row 3#88:7": {
+          "type": "BOOLEAN",
+          "defaultValue": true
+        },
+        "Show row 4#88:8": {
+          "type": "BOOLEAN",
+          "defaultValue": true
+        },
+        "Show row 5#88:9": {
+          "type": "BOOLEAN",
+          "defaultValue": true
+        }
+      }
+    },
+    {
+      "id": "89:254",
+      "name": "GenerationProgressCard",
+      "type": "COMPONENT_SET",
+      "description": "Summary card with Generating, Ready and Error variants. All states share 220px height, 24px padding and the same typography. Editable Status, Counter, Detail.",
+      "properties": {
+        "Status#89:0": {
+          "type": "TEXT",
+          "defaultValue": "Clip generation failed"
+        },
+        "Counter#89:1": {
+          "type": "TEXT",
+          "defaultValue": "01:00 — 01:30"
+        },
+        "Detail#89:2": {
+          "type": "TEXT",
+          "defaultValue": "Your other clips are saved"
+        },
+        "State": {
+          "type": "VARIANT",
+          "defaultValue": "Generating",
+          "variantOptions": [
+            "Generating",
+            "Ready",
+            "Error"
+          ]
+        }
+      },
+      "variants": [
+        {
+          "id": "86:199",
+          "name": "State=Generating",
+          "properties": {
+            "State": "Generating"
+          }
+        },
+        {
+          "id": "89:246",
+          "name": "State=Ready",
+          "properties": {
+            "State": "Ready"
+          }
+        },
+        {
+          "id": "89:250",
+          "name": "State=Error",
+          "properties": {
+            "State": "Error"
+          }
+        }
+      ]
+    },
+    {
+      "id": "90:256",
+      "name": "WardrobeThumbnail",
+      "type": "COMPONENT",
+      "description": "Compact selected clothing thumbnail, 72×72, with removable badge. No visible caption; use the clothing name for an accessible label and tooltip in code.",
+      "properties": {
+        "Show remove#90:0": {
+          "type": "BOOLEAN",
+          "defaultValue": true
+        }
+      }
+    },
+    {
+      "id": "92:263",
+      "name": "Icon/ChevronDown",
+      "type": "COMPONENT",
+      "description": "22px outline icon; 1.5px stroke, round caps and joins.",
+      "properties": {}
+    },
+    {
+      "id": "92:266",
+      "name": "Icon/ArrowUpRight",
+      "type": "COMPONENT",
+      "description": "22px outline icon; 1.5px stroke, round caps and joins.",
+      "properties": {}
+    },
+    {
+      "id": "92:297",
+      "name": "DropdownButton",
+      "type": "COMPONENT",
+      "description": "Selection button with editable label and a shared ChevronDown icon.",
+      "properties": {
+        "Label#92:0": {
+          "type": "TEXT",
+          "defaultValue": "1080p"
+        }
+      }
+    },
+    {
+      "id": "97:327",
+      "name": "AccountInput",
+      "type": "COMPONENT",
+      "description": "Single-line account input. Label and Value are editable. 52px input surface, 80px overall. Use semantic input types in implementation.",
+      "properties": {
+        "Label#97:0": {
+          "type": "TEXT",
+          "defaultValue": "Email"
+        },
+        "Value#97:1": {
+          "type": "TEXT",
+          "defaultValue": "you@example.com"
+        }
+      }
+    },
+    {
+      "id": "97:342",
+      "name": "LoginCard",
+      "type": "COMPONENT",
+      "description": "Login form with email and password fields. No social providers or registration assumptions. Primary action opens account screen in the mock prototype.",
+      "properties": {}
+    },
+    {
+      "id": "101:348",
+      "name": "CreditSummary",
+      "type": "COMPONENT",
+      "description": "Credit balance: available spendable credits, reserved for active jobs, settled spend in selected period. Demo: 2000 granted - 600 spent - 120 reserved = 1280 available.",
+      "properties": {
+        "Available#101:0": {
+          "type": "TEXT",
+          "defaultValue": "1,280"
+        },
+        "Reserved#101:1": {
+          "type": "TEXT",
+          "defaultValue": "120"
+        },
+        "Spent#101:2": {
+          "type": "TEXT",
+          "defaultValue": "600"
+        }
+      }
+    },
+    {
+      "id": "101:378",
+      "name": "CreditHistory",
+      "type": "COMPONENT",
+      "description": "Credit ledger. Illustrative amounts, no pricing model. Reservation is separate from settled spend; released reservation is not a new grant.",
+      "properties": {}
+    },
+    {
+      "id": "102:367",
+      "name": "AccountMenu",
+      "type": "COMPONENT",
+      "description": "Popover anchored below account avatar. Identity and credit balance, reservations, monthly spend, history and sign-out. Demo values; no billing plans assumed.",
+      "properties": {}
+    },
+    {
+      "id": "102:370",
+      "name": "AccountTrigger",
+      "type": "COMPONENT",
+      "description": "Account avatar trigger, opens AccountMenu popover.",
+      "properties": {}
+    },
+    {
+      "id": "102:415",
+      "name": "CreditHistoryDialog",
+      "type": "COMPONENT",
+      "description": "Credit history modal over the studio; transaction status distinguishes reservations, charges, releases and grants.",
+      "properties": {}
+    }
+  ],
+  "roadmaps": [
+    {
+      "y": 300,
+      "label": "01 / Set up the look and script",
+      "nodes": [
+        "40:457",
+        "40:368",
+        "27:2"
+      ],
+      "names": [
+        "Новый проект",
+        "Выбор одежды",
+        "Сценарий и длительность"
+      ],
+      "actions": [
+        "Open library",
+        "Apply selection"
+      ]
+    },
+    {
+      "y": 1660,
+      "label": "02 / Generate both parts → finished video",
+      "nodes": [
+        "40:96",
+        "39:2",
+        "51:2",
+        "40:190"
+      ],
+      "names": [
+        "Свободная форма · генерация",
+        "Движения · выбор и время",
+        "Движения · генерация",
+        "Video ready"
+      ],
+      "actions": [
+        "Part ready → motion",
+        "Generate",
+        "All clips ready"
+      ]
+    },
+    {
+      "y": 3020,
+      "label": "03 / Clip failed → retry",
+      "nodes": [
+        "40:279",
+        "80:995"
+      ],
+      "names": [
+        "Ошибка · остальные отрезки сохранены",
+        "Повторная генерация отрезка"
+      ],
+      "actions": [
+        "Retry clip"
+      ]
+    },
+    {
+      "y": 4380,
+      "label": "04 / Workspace → icon-only sidebar",
+      "nodes": [
+        "80:1086",
+        "40:2"
+      ],
+      "names": [
+        "Меню раскрыто",
+        "Меню свёрнуто"
+      ],
+      "actions": [
+        "Collapse sidebar"
+      ]
+    },
+    {
+      "y": 5800,
+      "label": "05 / Sign in → account menu → credit usage",
+      "nodes": [
+        "103:1504",
+        "103:1523",
+        "103:1559"
+      ],
+      "names": [
+        "Вход",
+        "Меню поверх студии",
+        "Credit history"
+      ],
+      "actions": [
+        "Sign in → click avatar",
+        "Credit history"
+      ]
+    }
+  ],
+  "textStyles": {
+    "22|Medium": "S:35a99dfd89d402cb877ceda6cbac8d74cb91c7ec,",
+    "14|Medium": "S:81ce7c1b2187b28310bf07992b0b7129a8016a5e,",
+    "11|Regular": "S:88b0604eecd23ca8b434747820bce36557629875,",
+    "14|Regular": "S:c945582b68083ffc3ffb9916a63465cb16fe9007,",
+    "12|Medium": "S:c55fc83a95a626bbd1c30d10cd66cbb7628acd1a,",
+    "10|Regular": "S:7a51d010509c90872236eac1181179178bf6d509,",
+    "13|Regular": "S:3ac49635da4f4e1d33bf8fc4bae94fc282d62ae5,",
+    "44|Regular": "S:d63a24fcc509296a6de2f0417c51b9040eb32ea1,",
+    "26|Medium": "S:9f4fc06f1767281a21ff394da01d2974b2e37e97,",
+    "12|Regular": "S:5728bc9e20396aefa33cd84b036cd7b6098b781b,",
+    "13|Medium": "S:7d6140f5b4353e08d6efad0c2cf5bae29a8e197b,",
+    "15|Regular": "S:8efafe5055a893e460034630c78eb257ca8399a0,",
+    "15|Medium": "S:603c343fb51c23549a28d3061576684e083478f3,",
+    "64|Regular": "S:1ab96b9c719a6a97047e564811b07099345ed242,",
+    "28|Medium": "S:3afb2e86f237d2d38eae846a7563941888fb99b9,",
+    "72|Regular": "S:cedb98d54bb090944f0afaa9ff6e3f1e121f3631,",
+    "16|Medium": "S:fbf46556111874b8e2dd782e42ac8c61e4013c89,",
+    "14|Bold": "S:4c7d7610fc2af3c1d55b97f5b35ee39c3cda9a21,",
+    "18|Medium": "S:b64c92439a81eadc021d3d875839efa839bd2ae7,",
+    "36|Regular": "S:724d3a35b1a61738f6c13073433db20b7e80b024,"
+  },
+  "semanticVariables": {
+    "color/canvas": "VariableID:59:3",
+    "color/surface": "VariableID:59:5",
+    "color/raised": "VariableID:59:7",
+    "color/control": "VariableID:59:9",
+    "color/inset": "VariableID:59:11",
+    "color/disabled": "VariableID:59:13",
+    "color/text/primary": "VariableID:59:15",
+    "color/text/secondary": "VariableID:59:17",
+    "color/text/muted": "VariableID:59:19",
+    "color/text/disabled": "VariableID:59:21",
+    "color/accent": "VariableID:59:23",
+    "color/on-accent": "VariableID:59:25",
+    "color/status/ready": "VariableID:59:27",
+    "color/status/queued": "VariableID:59:29",
+    "color/status/generating": "VariableID:59:31",
+    "color/status/error": "VariableID:59:33",
+    "color/error/surface": "VariableID:59:35",
+    "color/error/text": "VariableID:59:37",
+    "color/overlay": "VariableID:59:39",
+    "color/border": "VariableID:59:41",
+    "color/focus": "VariableID:59:43",
+    "color/primary/hover": "VariableID:59:45",
+    "color/secondary/hover": "VariableID:59:47",
+    "color/primary/pressed": "VariableID:59:49",
+    "color/secondary/pressed": "VariableID:59:51",
+    "color/white": "VariableID:59:53",
+    "space/0": "VariableID:59:54",
+    "space/3": "VariableID:59:55",
+    "space/4": "VariableID:59:56",
+    "space/8": "VariableID:59:57",
+    "space/9": "VariableID:59:58",
+    "space/10": "VariableID:59:59",
+    "space/12": "VariableID:59:60",
+    "space/13": "VariableID:59:61",
+    "space/14": "VariableID:59:62",
+    "space/16": "VariableID:59:63",
+    "space/18": "VariableID:59:64",
+    "space/20": "VariableID:59:65",
+    "space/24": "VariableID:59:66",
+    "space/28": "VariableID:59:67",
+    "space/32": "VariableID:59:68",
+    "space/40": "VariableID:59:69",
+    "space/48": "VariableID:59:70",
+    "radius/0": "VariableID:59:71",
+    "radius/1": "VariableID:59:72",
+    "radius/3": "VariableID:59:73",
+    "radius/8": "VariableID:59:74",
+    "radius/12": "VariableID:59:75",
+    "radius/14": "VariableID:59:76",
+    "radius/16": "VariableID:59:77",
+    "radius/20": "VariableID:59:78",
+    "radius/22": "VariableID:59:79",
+    "radius/24": "VariableID:59:80"
+  },
+  "locale": "en"
+}

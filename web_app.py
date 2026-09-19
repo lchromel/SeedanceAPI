@@ -17,6 +17,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.cookies import SimpleCookie, CookieError
+from functools import lru_cache
+from auth_store import AuthStore, RateLimited, default_auth_path, SESSION_TTL
+from auth_ui import LOGIN_HTML, LOGIN_JS
 
 
 APP_HOST = os.environ.get("HOST", "0.0.0.0")
@@ -142,19 +146,40 @@ def get_secret(names):
     return ""
 
 
-def web_credentials():
-    return (
-        get_secret(["WEB_APP_BASIC_AUTH_USERNAME"]),
-        get_secret(["WEB_APP_BASIC_AUTH_PASSWORD"]),
-    )
+@lru_cache(maxsize=1)
+def auth_store():
+    return AuthStore(default_auth_path())
+
+
+def auth_origin():
+    origin = os.environ.get("APP_ORIGIN", "http://127.0.0.1:8080").rstrip("/")
+    parsed = urllib.parse.urlsplit(origin)
+    local = parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost", "::1"}
+    if (parsed.scheme != "https" and not local) or not parsed.netloc or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:
+        raise ValueError("APP_ORIGIN must be an HTTPS origin (HTTP only for loopback development)")
+    return origin
+
+
+def cookie_name():
+    return "__Host-studio_session" if auth_origin().startswith("https:") else "studio_session"
+
+
+def session_token(handler):
+    try:
+        cookies = SimpleCookie(handler.headers.get("Cookie", ""))
+        morsel = cookies.get(cookie_name())
+        return morsel.value if morsel else ""
+    except CookieError:
+        return ""
+
+
+def session_cookie(token, clear=False):
+    secure = "; Secure" if auth_origin().startswith("https:") else ""
+    return f"{cookie_name()}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={0 if clear else SESSION_TTL}{secure}"
 
 
 def upload_signature(file_name, expires):
-    username, password = web_credentials()
-    if not username or not password:
-        raise PermissionError("Web authentication is not configured")
-    key = hashlib.sha256((username + ":" + password).encode("utf-8")).digest()
-    return hmac.new(key, f"upload:{file_name}:{expires}".encode("utf-8"), hashlib.sha256).hexdigest()
+    return hmac.new(auth_store().signing_key(), f"upload:{file_name}:{expires}".encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def signed_upload_url(file_name, base_url=""):
@@ -345,9 +370,11 @@ def enhanced_prompt_from_response(response, original, references):
     return prompt.strip()
 
 
-def json_response(handler, status, payload):
+def json_response(handler, status, payload, headers=None):
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     handler.send_response(status)
+    for name, value in (headers or {}).items():
+        handler.send_header(name, value)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Cache-Control", "no-store")
     handler.send_header("Content-Length", str(len(body)))
@@ -1120,37 +1147,75 @@ class SeedanceHandler(BaseHTTPRequestHandler):
         sys.stderr.write("[%s] %s\n" % (self.log_date_time_string(), message))
 
     def require_authentication(self, path, params=None):
-        if self.command == "GET" and path == "/health":
+        if self.command == "GET" and path in {"/health", "/login", "/login.js"}:
             return True
-        username, password = web_credentials()
-        if not username or not password:
-            json_response(self, 503, {"error": "Set WEB_APP_BASIC_AUTH_USERNAME and WEB_APP_BASIC_AUTH_PASSWORD on the server."})
+        store = auth_store()
+        if not store.configured():
+            json_response(self, 503, {"error": "Account is not configured. Run auth_store.py on the server."})
             return False
         if self.command == "GET" and valid_upload_signature(path, params or {}):
             return True
-        scheme, _, value = self.headers.get("Authorization", "").partition(" ")
-        if scheme.lower() == "basic":
-            try:
-                provided = base64.b64decode(value, validate=True)
-                expected = (username + ":" + password).encode("utf-8")
-                if hmac.compare_digest(provided, expected):
-                    return True
-            except (ValueError, binascii.Error):
-                pass
-        body = b"Authentication required."
-        self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="Seedance Studio", charset="UTF-8"')
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        token = session_token(self)
+        username = store.session(token)
+        if username:
+            if self.command not in {"GET", "HEAD"}:
+                origin = self.headers.get("Origin", "")
+                csrf = self.headers.get("X-CSRF-Token", "")
+                if origin != auth_origin() or not hmac.compare_digest(csrf.encode("utf-8"), store.csrf(token).encode("ascii")):
+                    json_response(self, 403, {"error": "Invalid request origin or CSRF token"})
+                    return False
+            self.account_username = username
+            return True
+        if self.command == "GET" and path == "/":
+            self.send_response(303)
+            self.send_header("Location", "/login")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        else:
+            json_response(self, 401, {"error": "Authentication required"})
         return False
+
+    def handle_login(self):
+        if self.headers.get("Origin") != auth_origin():
+            json_response(self, 403, {"error": "Invalid request origin"})
+            return
+        if not auth_store().configured():
+            json_response(self, 503, {"error": "Аккаунт ещё не настроен на сервере."})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if self.headers.get("Content-Type", "").split(";")[0] != "application/json" or not 0 < length <= 8192:
+                raise ValueError()
+            data = json.loads(self.rfile.read(length))
+            if not isinstance(data, dict):
+                raise ValueError()
+            token = auth_store().login(data.get("username"), data.get("password"), self.client_address[0])
+            if not token:
+                json_response(self, 401, {"error": "Неверный логин или пароль."})
+                return
+            previous = session_token(self)
+            if previous:
+                auth_store().logout(previous)
+            json_response(self, 200, {"ok": True}, {"Set-Cookie": session_cookie(token)})
+        except RateLimited:
+            json_response(self, 429, {"error": "Слишком много попыток. Попробуйте через 15 минут."}, {"Retry-After": "900"})
+        except (ValueError, UnicodeDecodeError):
+            json_response(self, 400, {"error": "Некорректный запрос входа."})
 
     def do_GET(self):
         path, _, query = self.path.partition("?")
         params = urllib.parse.parse_qs(query)
         if not self.require_authentication(path, params):
+            return
+        if path == "/login":
+            text_response(self, 200, LOGIN_HTML)
+            return
+        if path == "/login.js":
+            text_response(self, 200, LOGIN_JS, "application/javascript; charset=utf-8")
+            return
+        if path == "/api/auth/me":
+            json_response(self, 200, {"username": self.account_username, "csrfToken": auth_store().csrf(session_token(self))})
             return
         if path == "/":
             text_response(self, 200, HTML)
@@ -1233,7 +1298,14 @@ class SeedanceHandler(BaseHTTPRequestHandler):
         json_response(self, 404, {"error": "Not found"})
 
     def do_POST(self):
+        if self.path == "/api/auth/login":
+            self.handle_login()
+            return
         if not self.require_authentication(self.path.partition("?")[0]):
+            return
+        if self.path == "/api/auth/logout":
+            auth_store().logout(session_token(self))
+            json_response(self, 200, {"ok": True}, {"Set-Cookie": session_cookie("", clear=True)})
             return
         if self.path == "/api/enhance-prompt":
             self.handle_enhance_prompt()
@@ -1818,6 +1890,7 @@ HTML = """<!doctype html>
 </head>
 <body>
   <main class="shell">
+    <button id="signOutBtn" type="button" style="float:right">Выйти</button>
     <section class="workspace">
       <div class="topbar">
         <div class="brand">
@@ -3706,7 +3779,7 @@ async function createPrivateAsset() {
   try {
     const formData = new FormData();
     formData.append("file", file);
-    const response = await fetch("/api/upload-reference", {
+    const response = await sessionFetch("/api/upload-reference", {
       method: "POST",
       body: formData
     });
@@ -4278,7 +4351,7 @@ function renderReferencePreview() {
 async function uploadSingleReferenceFile(file) {
   const formData = new FormData();
   formData.append("file", file);
-  const response = await fetch("/api/upload-reference", {
+  const response = await sessionFetch("/api/upload-reference", {
     method: "POST",
     body: formData
   });
@@ -4363,8 +4436,25 @@ async function uploadReferenceFiles() {
   renderReferencePreview();
 }
 
+let authStatePromise;
+async function authState() {
+  if (!authStatePromise) authStatePromise = fetch('/api/auth/me').then(async response => {
+    if (!response.ok) { location.replace('/login'); throw new Error('Войдите в аккаунт'); }
+    return response.json();
+  });
+  return authStatePromise;
+}
+async function sessionFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (!['GET', 'HEAD'].includes((options.method || 'GET').toUpperCase())) {
+    headers.set('X-CSRF-Token', (await authState()).csrfToken);
+  }
+  const response = await fetch(url, {...options, headers});
+  if (response.status === 401) location.replace('/login');
+  return response;
+}
 async function apiFetch(url, options = {}) {
-  const response = await fetch(url, options);
+  const response = await sessionFetch(url, options);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(data.error || data.message || `HTTP ${response.status}`);
@@ -4687,6 +4777,10 @@ async function boot() {
   pretty({ ready: true, provider: state.provider });
 }
 
+document.querySelector('#signOutBtn')?.addEventListener('click', async () => {
+  try { await apiFetch('/api/auth/logout', {method:'POST'}); location.replace('/login'); }
+  catch (error) { pretty({error:error.message}); }
+});
 boot().catch((error) => {
   keyStatus.textContent = "boot error";
   keyStatus.className = "status-pill error";
@@ -4696,6 +4790,8 @@ boot().catch((error) => {
 
 
 def main():
+    auth_origin()  # Fail at startup on an unsafe/malformed public origin.
+    auth_store()
     server = ThreadingHTTPServer((APP_HOST, APP_PORT), SeedanceHandler)
     print(f"Seedance web service: http://{APP_HOST}:{APP_PORT}", flush=True)
     print(f"Token file: {TOKEN_FILE}", flush=True)

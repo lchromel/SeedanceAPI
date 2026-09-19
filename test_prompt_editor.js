@@ -10,6 +10,7 @@ function editor() {
     if (!elements.has(selector)) elements.set(selector, {
       value: "", textContent: "", hidden: false, disabled: false,
       get innerText() { return this.textContent; },
+      addEventListener() {},
       classList: { toggle() {} }
     });
     return elements.get(selector);

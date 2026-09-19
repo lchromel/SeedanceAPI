@@ -1,0 +1,40 @@
+name: Video Studio checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: studio
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: studio
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U studio"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      STUDIO_DEBUG: '1'
+      GENERATION_PROVIDER: mock
+      DATABASE_URL: postgres://studio:ci-only-password@localhost:5432/studio
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: pip install -r backend/requirements.lock
+      - run: npm --prefix frontend ci
+      - run: npm --prefix frontend run build
+      - run: npm --prefix frontend test
+      - run: python backend/manage.py collectstatic --noinput
+      - run: python backend/manage.py makemigrations --check --dry-run
+      - run: python backend/manage.py test studio

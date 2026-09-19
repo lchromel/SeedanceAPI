@@ -4,6 +4,8 @@ import json
 import shutil
 import subprocess
 import unittest
+import tempfile
+from auth_store import AuthStore
 from unittest import mock
 
 import web_app
@@ -301,7 +303,12 @@ class AssetLibraryTests(unittest.TestCase):
 
 class AuthenticationTests(unittest.TestCase):
     def setUp(self):
-        patcher = mock.patch.object(web_app, "web_credentials", return_value=("test-user", "test-password"))
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.store = AuthStore(self.directory.name + "/auth/auth.sqlite3")
+        self.store.set_password("test-user", "test-password-long-enough")
+        self.token = self.store.login("test-user", "test-password-long-enough", "test")
+        patcher = mock.patch.object(web_app, "auth_store", return_value=self.store)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -324,22 +331,24 @@ class AuthenticationTests(unittest.TestCase):
                              ("/api/upload-reference", "POST")]:
             with self.subTest(path=path):
                 response = self.request(path, method)
-                self.assertEqual(response.status, 401)
-                self.assertIn("Basic", response.headers["WWW-Authenticate"])
+                self.assertEqual(response.status, 303 if path == "/" else 401)
 
     def test_correct_credentials_open_page(self):
-        auth = "Basic " + base64.b64encode(b"test-user:test-password").decode()
-        response = self.request("/", authorization=auth)
+        handler = FakeHandler()
+        handler.path = "/"
+        handler.headers["Cookie"] = web_app.cookie_name() + "=" + self.token
+        web_app.SeedanceHandler.do_GET(handler)
+        response = handler
         self.assertEqual(response.status, 200)
         self.assertIn(b"Seedance", response.wfile.getvalue())
 
     def test_invalid_credentials_and_malformed_headers_are_denied(self):
         for value in ("Basic !!!", "Basic " + base64.b64encode(b"test-user:wrong").decode(), "Bearer wrong"):
             with self.subTest(value=value):
-                self.assertEqual(self.request("/", authorization=value).status, 401)
+                self.assertEqual(self.request("/api/assets", authorization=value).status, 401)
 
     def test_health_public_but_missing_configuration_fails_closed(self):
-        with mock.patch.object(web_app, "web_credentials", return_value=("", "")):
+        with mock.patch.object(self.store, "configured", return_value=False):
             self.assertEqual(self.request("/health").status, 200)
             self.assertEqual(self.request("/").status, 503)
             self.assertEqual(self.request("/api/generate", "POST").status, 503)
@@ -358,8 +367,8 @@ class AuthenticationTests(unittest.TestCase):
             old_url = web_app.signed_upload_url("example.png")
         self.assertEqual(self.request(old_url).status, 401)
         current_url = web_app.signed_upload_url("example.png")
-        with mock.patch.object(web_app, "web_credentials", return_value=("test-user", "changed")):
-            self.assertEqual(self.request(current_url).status, 401)
+        self.store.set_password("test-user", "changed-password-long-enough")
+        self.assertEqual(self.request(current_url).status, 401)
 
 
 if __name__ == "__main__":
