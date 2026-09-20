@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Asset, Kind } from "../types";
 import { api, time } from "../api";
-import { Button, Icon, Modal } from "./UI";
+import { Button, Icon, IconButton, Modal } from "./UI";
 export function Library({
   kind,
   assets,
@@ -24,7 +24,7 @@ export function Library({
   categories: Record<string, string>;
 }) {
   const input = useRef<HTMLInputElement>(null);
-  const [category, setCategory] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
   const needsAnalysis = kind === "clothing" || kind === "location";
   const [busy, setBusy] = useState(kind === "character");
   const [error, setError] = useState("");
@@ -63,7 +63,6 @@ export function Library({
       const data = new FormData();
       data.append("file", file);
       data.append("kind", kind);
-      data.append("category", category);
       const asset = await api<Asset>("assets", "POST", data);
       onUpload(asset);
       if (asset.warning) setError(asset.warning);
@@ -107,30 +106,12 @@ export function Library({
               ? "Video references · 4–120 seconds"
               : "Your private image library"}
         </span>
-        {needsAnalysis && (
-          <select
-            aria-label="Upload category"
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            disabled={busy}
-          >
-            <option value="">Choose category</option>
-            {Object.entries(categories).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        )}
         {kind === "character" ? (
           <Button onClick={() => setRefresh((n) => n + 1)} disabled={busy}>
             {busy ? "Syncing…" : "Refresh"}
           </Button>
         ) : (
-          <Button
-            onClick={() => input.current?.click()}
-            disabled={busy || (needsAnalysis && !category)}
-          >
+          <Button onClick={() => input.current?.click()} disabled={busy}>
             {busy ? (needsAnalysis ? "Analyzing…" : "Uploading…") : "Upload"}
             <Icon name="Plus" size={18} />
           </Button>
@@ -176,7 +157,7 @@ export function Library({
               {kind === "motion" && <small>{time(a.duration)} max</small>}
               {needsAnalysis && (
                 <small>
-                  {categories[a.category || ""] || "Choose category"}
+                  {categories[a.category || ""] || "Not identified"}
                   {a.analysisStatus !== "ready" ? " · Needs analysis" : ""}
                 </small>
               )}
@@ -187,20 +168,44 @@ export function Library({
               )}
             </button>
             {needsAnalysis && (
-              <details className="asset-details">
-                <summary>
-                  {a.analysisStatus === "ready"
-                    ? "Reference details"
-                    : "Analyze reference"}
-                </summary>
-                <AssetDetails
-                  key={`${a.id}-${a.category}`}
-                  asset={a}
-                  categories={categories}
-                  busy={busy}
-                  onAnalyze={analyze}
-                />
-              </details>
+              <>
+                <div className="asset-edit-trigger">
+                  <IconButton
+                    icon="Edit"
+                    label={`Edit ${a.name}`}
+                    onClick={() => setEditing(editing === a.id ? null : a.id)}
+                  />
+                </div>
+                {editing === a.id && (
+                  <div className="asset-details">
+                    <AssetDetails
+                      key={`${a.id}-${a.name}-${a.category}-${a.description}`}
+                      asset={a}
+                      categories={categories}
+                      busy={busy}
+                      onAnalyze={analyze}
+                      onSave={async (changes) => {
+                        setBusy(true);
+                        setError("");
+                        try {
+                          onUpdate(
+                            await api<Asset>(
+                              `assets/${a.id}`,
+                              "PATCH",
+                              changes,
+                            ),
+                          );
+                          setEditing(null);
+                        } catch (e) {
+                          setError((e as Error).message);
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+              </>
             )}
           </div>
         ))}
@@ -234,15 +239,32 @@ function AssetDetails({
   categories,
   busy,
   onAnalyze,
+  onSave,
 }: {
   asset: Asset;
   categories: Record<string, string>;
   busy: boolean;
   onAnalyze: (asset: Asset, category: string) => Promise<void>;
+  onSave: (changes: {
+    name: string;
+    category: string;
+    description: string;
+  }) => Promise<void>;
 }) {
   const [category, setCategory] = useState(asset.category || "");
+  const [name, setName] = useState(asset.name);
+  const [description, setDescription] = useState(asset.description || "");
   return (
     <div>
+      <label>
+        Name
+        <input
+          value={name}
+          maxLength={120}
+          disabled={busy}
+          onChange={(e) => setName(e.target.value)}
+        />
+      </label>
       <select
         aria-label={`Category for ${asset.name}`}
         value={category}
@@ -256,12 +278,23 @@ function AssetDetails({
           </option>
         ))}
       </select>
-      {asset.description && <p>{asset.description}</p>}
+      <label>
+        Description
+        <textarea
+          value={description}
+          maxLength={1200}
+          disabled={busy}
+          onChange={(e) => setDescription(e.target.value)}
+        />
+      </label>
       <Button
-        disabled={busy || !category}
-        onClick={() => onAnalyze(asset, category)}
+        disabled={busy || !category || !name.trim() || !description.trim()}
+        onClick={() => onSave({ name, category, description })}
       >
-        {busy ? "Analyzing…" : "Analyze & rename"}
+        Save
+      </Button>
+      <Button disabled={busy} onClick={() => onAnalyze(asset, "")}>
+        {busy ? "Analyzing…" : "Auto-detect again"}
       </Button>
     </div>
   );

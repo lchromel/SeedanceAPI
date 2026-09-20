@@ -135,11 +135,14 @@ reach the browser. Generation sends the original `asset://` ID.
 
 ### AI reference descriptions and freeform enhancement
 
-Clothing and location uploads require a category. The server reads the sanitized
+Clothing and location uploads automatically detect a category. The server reads the sanitized
 private image, reduces it to 1024 px and sends it inline to the vision model;
 DeepSeek then writes the English name and reference description. Failed analysis
-keeps the upload and can be retried under Reference details. Existing uploads need
-a category and analysis there before being used in a new generation.
+keeps the upload and can be retried via the pencil icon. This editor also allows
+manual name, category and description corrections without an AI request. Existing
+unanalyzed uploads can use Auto-detect again there before a new generation.
+Location categories describe place types (Apartment, Hotel, Villa, etc.); uncertain
+images use Other rather than guessing a specific place type.
 
 Both models use the existing server-only `ARK_API_KEY`. Optional overrides:
 `REFERENCE_VISION_ENDPOINT_ID` and `DEEPSEEK_ENDPOINT_ID` (the legacy

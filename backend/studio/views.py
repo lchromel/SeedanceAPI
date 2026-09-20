@@ -205,7 +205,9 @@ def upload(request):
     if not incoming or kind not in ("character", "clothing", "location", "motion"):
         raise ValidationError("Choose a file and its library.")
     category = request.data.get("category", "")
-    if kind in references.CATEGORIES and category not in references.CATEGORIES[kind]:
+    if kind in references.CATEGORIES and (
+        not isinstance(category, str) or (category and category not in references.CATEGORIES[kind])
+    ):
         raise ValidationError("Choose a category for this reference.")
     if incoming.size > 50 * 1024 * 1024:
         raise ValidationError("Files must be at most 50 MB.")
@@ -429,7 +431,9 @@ def character_preview(request, pk):
 def analyze_asset(request, pk):
     asset = get_object_or_404(Asset, pk=pk, owner=request.user, kind__in=references.CATEGORIES)
     category = request.data.get("category", asset.category)
-    if category not in references.CATEGORIES[asset.kind]:
+    if not isinstance(category, str) or (
+        category and category not in references.CATEGORIES[asset.kind]
+    ):
         raise ValidationError("Choose a category for this reference.")
     try:
         enhancer.analyze(asset, category=category)
@@ -456,3 +460,41 @@ def enhance_prompt(request):
         return Response(enhancer.enhance(request.user, serializer.validated_data))
     except enhancer.EnhancementError as exc:
         return Response({"detail": str(exc)}, status=502)
+
+
+@api_view(["PATCH"])
+def edit_asset(request, pk):
+    from datetime import timedelta
+    from django.utils import timezone
+
+    with transaction.atomic():
+        asset = get_object_or_404(
+            Asset.objects.select_for_update(),
+            pk=pk,
+            owner=request.user,
+            kind__in=references.CATEGORIES,
+        )
+        if (
+            asset.analysis_status == "pending"
+            and asset.analysis_started
+            and asset.analysis_started > timezone.now() - timedelta(minutes=3)
+        ):
+            return Response({"detail": "Wait for the current analysis to finish."}, status=409)
+        name, category, description = (
+            request.data.get(key, getattr(asset, key))
+            for key in ("name", "category", "description")
+        )
+        if not isinstance(name, str) or not 1 <= len(name.strip()) <= 120:
+            raise ValidationError("Name must be 1–120 characters.")
+        if not isinstance(category, str) or category not in references.CATEGORIES[asset.kind]:
+            raise ValidationError("Choose a category for this reference.")
+        if not isinstance(description, str) or not 1 <= len(description.strip()) <= 1200:
+            raise ValidationError("Description must be 1–1200 characters.")
+        if re.search(r"@(?:image|video)\d|https?://|asset://", name + description, re.I):
+            raise ValidationError(
+                "Reference details must describe the image without tags or links."
+            )
+        asset.name, asset.category, asset.description = name.strip(), category, description.strip()
+        asset.analysis_status = "ready"
+        asset.save(update_fields=["name", "category", "description", "analysis_status"])
+    return Response(asset_data(asset))

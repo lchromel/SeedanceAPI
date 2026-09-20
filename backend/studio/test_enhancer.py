@@ -26,7 +26,7 @@ class EnhancerTests(TestCase):
         self.location = Asset.objects.create(
             owner=self.user,
             kind="location",
-            category="interior",
+            category="apartment",
             name="Room",
             key="room",
             description="Concrete floor and side window.",
@@ -144,7 +144,7 @@ class EnhancerTests(TestCase):
         image.name = "upload.png"
         return image
 
-    def test_upload_requires_category_and_auto_names_from_observations(self):
+    def test_upload_auto_detects_category_and_names_from_observations(self):
         with (
             tempfile.TemporaryDirectory() as folder,
             override_settings(MEDIA_ROOT=Path(folder), S3_BUCKET="", DEBUG=True),
@@ -153,17 +153,18 @@ class EnhancerTests(TestCase):
                 enhancer,
                 "chat",
                 side_effect=[
-                    "Green rubber boots.",
+                    '{"category":"boots","description":"Green rubber boots."}',
                     '{"name":"Green Rubber Boots","description":"Tall green rubber boots."}',
                 ],
             ) as chat:
                 response = self.client.post(
                     "/api/assets",
-                    {"kind": "clothing", "category": "boots", "file": self.image_file()},
+                    {"kind": "clothing", "file": self.image_file()},
                     format="multipart",
                 )
             self.assertEqual(response.status_code, 201)
             self.assertEqual(response.data["name"], "Green Rubber Boots")
+            self.assertEqual(response.data["category"], "boots")
             self.assertEqual(response.data["analysisStatus"], "ready")
             self.assertTrue(
                 chat.call_args_list[0]
@@ -174,7 +175,7 @@ class EnhancerTests(TestCase):
             with patch.object(enhancer, "chat") as chat:
                 response = self.client.post(
                     "/api/assets",
-                    {"kind": "clothing", "category": "interior", "file": self.image_file()},
+                    {"kind": "clothing", "category": "apartment", "file": self.image_file()},
                     format="multipart",
                 )
                 self.assertEqual(response.status_code, 400)
@@ -188,7 +189,7 @@ class EnhancerTests(TestCase):
             with patch.object(enhancer, "chat", side_effect=enhancer.EnhancementError("Try again")):
                 response = self.client.post(
                     "/api/assets",
-                    {"kind": "location", "category": "interior", "file": self.image_file()},
+                    {"kind": "location", "category": "apartment", "file": self.image_file()},
                     format="multipart",
                 )
             self.assertEqual(response.status_code, 201)
@@ -198,10 +199,49 @@ class EnhancerTests(TestCase):
             with patch.object(
                 enhancer,
                 "chat",
-                side_effect=["Green walls.", '{"name":"Green Room","description":"Green walls."}'],
+                side_effect=[
+                    '{"category":"other","description":"Green walls."}',
+                    '{"name":"Green Room","description":"Green walls."}',
+                ],
             ):
                 retried = self.client.post(
-                    f"/api/assets/{asset.pk}/analyze", {"category": "interior"}, format="json"
+                    f"/api/assets/{asset.pk}/analyze", {"category": "apartment"}, format="json"
                 )
             self.assertEqual(retried.status_code, 200)
             self.assertEqual(retried.data["analysisStatus"], "ready")
+
+    def test_manual_correction_is_private_and_does_not_call_ai(self):
+        with patch.object(enhancer, "chat") as chat:
+            response = self.client.patch(
+                f"/api/assets/{self.location.pk}",
+                {
+                    "name": "Garden Villa",
+                    "category": "villa",
+                    "description": "Stone terrace beside a garden.",
+                },
+                format="json",
+            )
+            chat.assert_not_called()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["category"], "villa")
+        self.assertEqual(response.data["analysisStatus"], "ready")
+        other = get_user_model().objects.create_user("metadata-outsider")
+        self.client.force_authenticate(other)
+        self.assertEqual(
+            self.client.patch(f"/api/assets/{self.location.pk}", {"name": "wrong"}).status_code, 404
+        )
+
+    def test_manual_correction_waits_for_active_analysis(self):
+        from django.utils import timezone
+
+        self.location.analysis_status = "pending"
+        self.location.analysis_started = timezone.now()
+        self.location.save()
+        self.assertEqual(
+            self.client.patch(
+                f"/api/assets/{self.location.pk}",
+                {"name": "Villa", "category": "villa", "description": "Stone terrace."},
+                format="json",
+            ).status_code,
+            409,
+        )

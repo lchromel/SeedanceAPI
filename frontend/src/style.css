@@ -1194,3 +1194,40 @@ dialog::backdrop {
   font: inherit;
   line-height: 1.6;
 }
+
+.library-entry {
+  position: relative;
+}
+.asset-edit-trigger {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+}
+.asset-edit-trigger .icon-button {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #202224e8;
+}
+.asset-edit-trigger .icon {
+  width: 16px;
+  height: 16px;
+}
+.asset-details label {
+  display: grid;
+  gap: 6px;
+}
+.asset-details input,
+.asset-details textarea {
+  width: 100%;
+  padding: 9px;
+  border: 1px solid #45484e;
+  border-radius: 8px;
+  background: #202224;
+  color: inherit;
+  font: inherit;
+}
+.asset-details textarea {
+  min-height: 110px;
+  resize: vertical;
+}

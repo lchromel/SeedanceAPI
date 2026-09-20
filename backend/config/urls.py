@@ -14,6 +14,7 @@ urlpatterns = [
     path("api/chunks/<uuid:pk>/retry", views.retry),
     path("api/assets", views.upload),
     path("api/assets/<uuid:pk>/analyze", views.analyze_asset),
+    path("api/assets/<uuid:pk>", views.edit_asset),
     path("api/prompt/references", views.reference_prompt),
     path("api/prompt/enhance", views.enhance_prompt),
     path("api/characters/sync", views.characters),

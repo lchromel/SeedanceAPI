@@ -20,12 +20,17 @@ CATEGORIES = {
         "other": "Other clothing",
     },
     "location": {
-        "interior": "Interior",
-        "exterior": "Exterior",
+        "apartment": "Apartment",
+        "hotel": "Hotel",
+        "villa": "Villa",
+        "house": "House",
         "studio": "Studio",
-        "urban": "Urban space",
-        "nature": "Nature",
-        "other": "Other location",
+        "office": "Office",
+        "restaurant": "Restaurant",
+        "street": "Street",
+        "beach": "Beach",
+        "garden": "Garden",
+        "other": "Other",
     },
 }
 
