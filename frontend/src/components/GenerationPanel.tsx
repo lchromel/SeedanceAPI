@@ -152,8 +152,8 @@ export function GenerationPanel({
                   )}
                 </details>
                 <label className="script-field">
-                  <span>Dialogue</span>
                   <textarea
+                    aria-label="Dialogue"
                     placeholder="What does the character say?"
                     value={c.speech}
                     onChange={(e) => onChange({ ...c, speech: e.target.value })}
