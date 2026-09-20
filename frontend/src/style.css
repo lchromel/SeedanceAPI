@@ -502,6 +502,12 @@ small,
   color: var(--studio-color-accent);
   line-height: 1.4;
 }
+.part-heading .choose-presets {
+  margin-left: auto;
+  min-height: 30px;
+  padding: 6px 12px;
+  font-size: 12px;
+}
 .part-heading h2 {
   font-size: 18px;
 }
@@ -643,16 +649,10 @@ small,
   font-size: 10px;
   color: var(--studio-color-error-text);
 }
-.motion-heading,
 .motion-total {
   display: flex;
   justify-content: space-between;
   align-items: center;
-}
-.motion-heading {
-  align-items: flex-start;
-  font-size: 12px;
-  color: var(--studio-color-text-muted);
 }
 .empty-sequence {
   padding: 40px 16px;

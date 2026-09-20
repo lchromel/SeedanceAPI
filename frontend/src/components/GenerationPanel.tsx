@@ -89,6 +89,11 @@ export function GenerationPanel({
         <header className="part-heading">
           <span>{part === "freeform" ? "01" : "02"}</span>
           <h2>{part === "freeform" ? "Freeform" : "Motion"}</h2>
+          {part === "motion" && (
+            <Button className="choose-presets" onClick={onLibrary} disabled={busy || !!active}>
+              Choose presets
+            </Button>
+          )}
         </header>
         <div className="generation-scroll" ref={scroll}>
           {run && (
@@ -162,10 +167,7 @@ export function GenerationPanel({
               </>
             ) : (
               <>
-                <div className="motion-heading">
-                  <span>Motion sequence</span>
-                  <Button onClick={onLibrary}>Choose presets</Button>
-                </div>
+                <label className="field-label">Motion sequence</label>
                 {c.motions.length === 0 ? (
                   <div className="empty-sequence">
                     Add a motion reference from your library.
