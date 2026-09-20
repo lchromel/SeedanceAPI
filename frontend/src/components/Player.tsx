@@ -53,10 +53,6 @@ export function Player({
   };
   return (
     <section className="player-panel">
-      <header>
-        <span>Preview</span>
-        <span className="muted">9:16</span>
-      </header>
       <div className="video-stage">
         {chunk?.url ? (
           <video
@@ -127,24 +123,6 @@ export function Player({
           <div className="timeline-empty" />
         )}
       </div>
-      <input
-        className="scrubber"
-        aria-label="Playback position"
-        type="range"
-        min={0}
-        max={Math.max(0, total - 0.1)}
-        step={0.1}
-        value={(chunk?.start || 0) + elapsed}
-        onChange={(e) => scrub(Number(e.target.value))}
-      />
-      <div className="time-labels">
-        <span>0:00</span>
-        <span>{time(total)}</span>
-      </div>
-      <p className="part-times">
-        Freeform {time(project.config.duration)} <span>/</span> Motion{" "}
-        {time(total - project.config.duration)}
-      </p>
       {full?.url ? (
         <a
           className="button export"

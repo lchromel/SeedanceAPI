@@ -349,6 +349,9 @@ small,
   padding: 4px 8px;
 }
 .editor {
+  --generation-padding: 24px;
+  --stage-tabs-height: 44px;
+  --stage-tabs-gap: 12px;
   display: grid;
   grid-template-columns: minmax(270px, 0.86fr) minmax(380px, 1.3fr);
   gap: 24px;
@@ -361,12 +364,6 @@ small,
   min-height: 0;
   gap: 14px;
 }
-.player-panel > header {
-  display: flex;
-  justify-content: space-between;
-  font-size: 12px;
-  padding: 0 2px;
-}
 .video-stage {
   background: var(--studio-color-inset);
   border-radius: 20px;
@@ -376,7 +373,7 @@ small,
   display: flex;
   align-items: center;
   justify-content: center;
-  max-height: calc(100dvh - 276px);
+  max-height: calc(100dvh - 320px);
   aspect-ratio: 9/16;
   align-self: center;
   width: 100%;
@@ -450,27 +447,16 @@ small,
   width: 100%;
   border-radius: 3px;
 }
-.time-labels {
-  display: flex;
-  justify-content: space-between;
-  font-size: 10px;
-  color: var(--studio-color-text-muted);
-  margin-top: -10px;
-}
-.part-times {
-  font-size: 11px;
-  color: var(--studio-color-text-muted);
-  display: flex;
-  gap: 12px;
-}
 .export {
   width: 100%;
   margin-top: auto;
+  margin-bottom: calc(var(--generation-padding) + var(--stage-tabs-height) + var(--stage-tabs-gap));
+  flex-shrink: 0;
 }
 .generation {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--stage-tabs-gap);
   min-height: 0;
 }
 .stage-tabs {
@@ -481,7 +467,7 @@ small,
 }
 .stage-tabs button {
   flex: 1;
-  min-height: 44px;
+  min-height: var(--stage-tabs-height);
   background: var(--studio-color-control);
   border-radius: 24px;
   font-size: 13px;
@@ -496,7 +482,7 @@ small,
   display: flex;
   flex-direction: column;
   gap: 24px;
-  padding: 24px;
+  padding: var(--generation-padding);
   min-height: 0;
   flex: 1;
 }
@@ -940,8 +926,8 @@ dialog::backdrop {
   .workspace {
     padding: 20px 16px 20px 0;
   }
-  .generation-card {
-    padding: 18px;
+  .editor {
+    --generation-padding: 18px;
   }
   .look-card > img {
     height: 150px;
@@ -993,7 +979,7 @@ dialog::backdrop {
   }
   .editor {
     grid-template-columns: minmax(180px, 0.75fr) minmax(280px, 1fr);
-    align-items: start;
+    align-items: stretch;
   }
   .generation-card {
     min-height: 650px;
@@ -1024,6 +1010,9 @@ dialog::backdrop {
   }
 }
 @media (max-width: 620px) {
+  .export {
+    margin-bottom: 0;
+  }
   .editor {
     display: flex;
     flex-direction: column;
@@ -1092,8 +1081,8 @@ dialog::backdrop {
 /* Keep the preview frame vertical at every desktop viewport height. */
 @media (min-width: 851px) {
   .video-stage {
-    width: min(100%, calc((100dvh - 276px) * 9 / 16));
-    height: calc(100dvh - 276px);
+    width: min(100%, calc((100dvh - 320px) * 9 / 16));
+    height: calc(100dvh - 320px);
     flex: 0 0 auto;
   }
 }
