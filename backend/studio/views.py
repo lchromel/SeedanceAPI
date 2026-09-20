@@ -395,6 +395,10 @@ def character_preview(request, pk):
             with Image.open(path) as image:
                 if image.width * image.height > 25_000_000:
                     raise ValueError()
+                # Focus character previews on the upper-right cell of a 3×3 grid.
+                # Generation still references the untouched BytePlus asset.
+                width, height = image.size
+                image = image.crop((width * 2 // 3, 0, width, max(1, height // 3)))
                 image.thumbnail((640, 640))
                 buffer = io.BytesIO()
                 image.convert("RGB").save(buffer, "JPEG", quality=85)

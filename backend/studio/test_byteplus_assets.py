@@ -94,7 +94,9 @@ class BytePlusAssetsTests(TestCase):
 
         def download(_url, target, **kwargs):
             self.assertEqual(kwargs["max_bytes"], 20 * 1024 * 1024)
-            Image.new("RGB", (900, 1200)).save(Path(target), "PNG")
+            image = Image.new("RGB", (1800, 2400), "blue")
+            image.paste((255, 0, 0), (1200, 0, 1800, 800))
+            image.save(Path(target), "PNG")
 
         with (
             patch.object(
@@ -107,7 +109,12 @@ class BytePlusAssetsTests(TestCase):
             response = self.client.get(url)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "image/jpeg")
-        self.assertEqual(Image.open(io.BytesIO(response.content)).size, (480, 640))
+        preview = Image.open(io.BytesIO(response.content))
+        self.assertEqual(preview.size, (480, 640))
+        for point in ((0, 0), (240, 320), (479, 639)):
+            red, green, blue = preview.getpixel(point)
+            self.assertGreater(red, 250)
+            self.assertLess(green + blue, 5)
         other = get_user_model().objects.create_user("other-catalog-user")
         self.client.force_authenticate(other)
         with patch.object(byteplus_assets, "detail") as detail:
