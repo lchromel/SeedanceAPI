@@ -107,14 +107,14 @@ export function GenerationPanel({
               <>
                 <label className="field-label">Part duration</label>
                 <div className="duration-control">
-                  {[30, 60, 90, 120].map((d) => (
+                  {[4, 30, 60, 90, 120].map((d) => (
                     <Button
                       key={d}
                       primary={c.duration === d}
                       onClick={() => onChange({ ...c, duration: d })}
                     >
-                      {d === 30
-                        ? "30 s"
+                      {d < 60
+                        ? `${d} s`
                         : d === 60
                           ? "1 min"
                           : d === 90

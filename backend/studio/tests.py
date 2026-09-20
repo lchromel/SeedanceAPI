@@ -53,6 +53,22 @@ class StudioTests(TestCase):
     def start(self, key=None):
         return generate(self.user, self.project.id, "freeform", key or uuid.uuid4())
 
+    def test_four_second_preview_creates_one_clip_and_reserves_four_seconds(self):
+        response = self.client.patch(
+            f"/api/projects/{self.project.pk}",
+            {"revision": self.project.revision, "config": {**self.config, "duration": 4}},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        run = self.start()
+        self.assertEqual(run.chunks.count(), 1)
+        chunk = run.chunks.get()
+        self.assertEqual((chunk.start, chunk.duration, chunk.cost), (0, 4, 4))
+        wallet = Wallet.objects.get(user=self.user)
+        self.assertEqual((wallet.available, wallet.held), (996, 4))
+        with patch("studio.provider.storage.url", return_value="https://example.com/ref.jpg"):
+            self.assertEqual(provider.payload(chunk)["duration"], 4)
+
     def test_reserve_and_idempotent_request(self):
         key = uuid.uuid4()
         run = self.start(key)

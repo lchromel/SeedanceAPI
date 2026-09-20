@@ -13,7 +13,7 @@ class ProjectConfig(serializers.Serializer):
     character = serializers.UUIDField(allow_null=True, default=None)
     clothing = serializers.ListField(child=serializers.UUIDField(), max_length=8, default=list)
     location = serializers.UUIDField(allow_null=True, default=None)
-    duration = serializers.ChoiceField(choices=[30, 60, 90, 120], default=90)
+    duration = serializers.ChoiceField(choices=[4, 30, 60, 90, 120], default=90)
     action = serializers.CharField(max_length=6000, allow_blank=True, default="")
     speech = serializers.CharField(max_length=6000, allow_blank=True, default="")
     motions = MotionSelection(many=True, default=list)
