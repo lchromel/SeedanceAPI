@@ -124,8 +124,8 @@ export function GenerationPanel({
                   ))}
                 </div>
                 <label className="script-field">
-                  <span>Action</span>
                   <textarea
+                    aria-label="Action"
                     placeholder="What happens in the scene?"
                     value={c.action}
                     onChange={(e) => onChange({ ...c, action: e.target.value })}

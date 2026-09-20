@@ -544,6 +544,9 @@ small,
   border-radius: 14px;
   padding: 16px;
 }
+.script-field:focus-within {
+  background: var(--studio-color-control);
+}
 .script-field > span {
   font-size: 12px;
   color: var(--studio-color-text-muted);
@@ -551,11 +554,11 @@ small,
 .script-field textarea {
   background: none;
   border: 0;
-  resize: vertical;
+  resize: none;
   min-height: 90px;
   color: var(--studio-color-text-secondary);
   line-height: 1.6;
-  outline-offset: 6px;
+  outline: none;
   width: 100%;
 }
 .script-field textarea::placeholder {
