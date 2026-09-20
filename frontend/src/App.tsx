@@ -408,6 +408,38 @@ export default function App() {
           selected={selected}
           onClose={() => setLibrary(null)}
           onSelect={selectAsset}
+          onDelete={(id, changedProjects) => {
+            setBoot((current) =>
+              current
+                ? {
+                    ...current,
+                    assets: current.assets.filter((a) => a.id !== id),
+                  }
+                : current,
+            );
+            setProject((current) => {
+              if (!current) return current;
+              const updated = changedProjects.find(
+                (p) =>
+                  p.id === current.id &&
+                  p.previousRevision === current.revision,
+              );
+              return {
+                ...current,
+                revision: updated?.revision ?? current.revision,
+                config: {
+                  ...current.config,
+                  clothing: current.config.clothing.filter(
+                    (item) => item !== id,
+                  ),
+                  location:
+                    current.config.location === id
+                      ? null
+                      : current.config.location,
+                },
+              };
+            });
+          }}
           onSync={(items) =>
             setBoot((current) =>
               current

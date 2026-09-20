@@ -1190,6 +1190,8 @@ dialog::backdrop {
   position: relative;
 }
 .asset-edit-trigger {
+  display: flex;
+  gap: 6px;
   position: absolute;
   top: 10px;
   left: 10px;

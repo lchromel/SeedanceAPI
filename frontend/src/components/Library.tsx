@@ -11,6 +11,7 @@ export function Library({
   onUpload,
   onSync,
   onUpdate,
+  onDelete,
   categories,
 }: {
   kind: Kind;
@@ -21,6 +22,10 @@ export function Library({
   onUpload: (asset: Asset) => void;
   onSync: (assets: Asset[]) => void;
   onUpdate: (asset: Asset) => void;
+  onDelete: (
+    id: string,
+    projects: { id: string; previousRevision: number; revision: number }[],
+  ) => void;
   categories: Record<string, string>;
 }) {
   const input = useRef<HTMLInputElement>(null);
@@ -88,6 +93,22 @@ export function Library({
         category: selectedCategory,
         analysisStatus: "failed",
       });
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function remove(asset: Asset) {
+    if (!window.confirm(`Delete “${asset.name}” from your library?`)) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api<{
+        projects: { id: string; previousRevision: number; revision: number }[];
+      }>(`assets/${asset.id}`, "DELETE");
+      onDelete(asset.id, result.projects);
+      setEditing(null);
+    } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
@@ -170,6 +191,15 @@ export function Library({
             {needsAnalysis && (
               <>
                 <div className="asset-edit-trigger">
+                  <button
+                    className="icon-button"
+                    aria-label={`Delete ${a.name}`}
+                    title="Delete from library"
+                    disabled={busy}
+                    onClick={() => remove(a)}
+                  >
+                    <Icon name="Trash" size={16} />
+                  </button>
                   <IconButton
                     icon="Edit"
                     label={`Edit ${a.name}`}
@@ -230,7 +260,13 @@ function AssetPreview({ url }: { url: string }) {
   return failed ? (
     <span className="muted">Preview unavailable</span>
   ) : (
-    <img loading="lazy" decoding="async" src={url} alt="" onError={() => setFailed(true)} />
+    <img
+      loading="lazy"
+      decoding="async"
+      src={url}
+      alt=""
+      onError={() => setFailed(true)}
+    />
   );
 }
 

@@ -504,10 +504,13 @@ def enhance_prompt(request):
         return Response({"detail": str(exc)}, status=502)
 
 
-@api_view(["PATCH"])
+@api_view(["PATCH", "DELETE"])
 def edit_asset(request, pk):
     from datetime import timedelta
     from django.utils import timezone
+
+    if request.method == "DELETE":
+        return delete_asset(request, pk)
 
     with transaction.atomic():
         asset = get_object_or_404(
@@ -540,3 +543,42 @@ def edit_asset(request, pk):
         asset.analysis_status = "ready"
         asset.save(update_fields=["name", "category", "description", "analysis_status"])
     return Response(asset_data(asset))
+
+
+@transaction.atomic
+def delete_asset(request, pk):
+    from datetime import timedelta
+    from django.utils import timezone
+
+    # Generation takes the same project lock before snapshotting references.
+    projects = list(Project.objects.select_for_update().filter(owner=request.user).order_by("pk"))
+    asset = get_object_or_404(
+        Asset.objects.select_for_update(), pk=pk, owner=request.user,
+        kind__in=("clothing", "location"), provider_id="",
+    )
+    if (asset.analysis_status == "pending" and asset.analysis_started
+            and asset.analysis_started > timezone.now() - timedelta(minutes=3)):
+        return Response({"detail": "Wait for the current analysis to finish."}, status=409)
+    asset_id = str(asset.pk)
+    for run in Run.objects.filter(project__owner=request.user).exclude(state="ready"):
+        snapshot = run.snapshot
+        ids = snapshot.get("reference_ids", []) + snapshot.get("clothing", [])
+        if asset_id in ids or snapshot.get("location") == asset_id:
+            return Response({"detail": "This asset is used by an unfinished generation. Finish it before deleting."}, status=409)
+    changed = []
+    for project in projects:
+        config = project.config
+        if asset_id not in config.get("clothing", []) and config.get("location") != asset_id:
+            continue
+        previous = project.revision
+        project.config = {
+            **config,
+            "clothing": [item for item in config.get("clothing", []) if item != asset_id],
+            "location": None if config.get("location") == asset_id else config.get("location"),
+        }
+        project.revision += 1
+        project.save(update_fields=["config", "revision", "updated"])
+        changed.append({"id": str(project.pk), "previousRevision": previous, "revision": project.revision})
+    # Removing the ownership record also revokes browser access to the private files.
+    asset.delete()
+    return Response({"deleted": asset_id, "projects": changed})
