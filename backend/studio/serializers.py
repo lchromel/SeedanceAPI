@@ -1,3 +1,4 @@
+from django.db.models import Q
 from rest_framework import serializers
 
 from .models import Asset
@@ -21,7 +22,9 @@ class ProjectConfig(serializers.Serializer):
         user = self.context["user"]
         for kind in ("character", "clothing", "location"):
             ids = data[kind] if kind == "clothing" else ([data[kind]] if data[kind] else [])
-            if Asset.objects.filter(owner=user, kind=kind, id__in=ids).count() != len(set(ids)):
+            if Asset.objects.filter(owner=user, kind=kind, id__in=ids).filter(
+                Q(provider_id="") | Q(provider_status="Active")
+            ).count() != len(set(ids)):
                 raise serializers.ValidationError("An asset is unavailable.")
         if (
             len(data["motions"]) > 10

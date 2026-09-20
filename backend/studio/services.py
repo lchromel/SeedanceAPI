@@ -5,7 +5,7 @@ from django.db import transaction
 from rest_framework.exceptions import ValidationError
 
 from .billing import post
-from .models import Chunk, Project, Run
+from .models import Asset, Chunk, Project, Run
 
 
 def split_duration(seconds, maximum):
@@ -56,6 +56,9 @@ def generate(user, project_id, part, request_key):
     config = project.config
     if not config.get("character"):
         raise ValidationError("Choose a character first.")
+    character = Asset.objects.filter(id=config["character"], owner=user).first()
+    if not character or (character.provider_id and character.provider_status != "Active"):
+        raise ValidationError("This character is unavailable. Refresh the character library.")
     if part == "freeform" and not config.get("action"):
         raise ValidationError("Describe the action first.")
     if part == "motion" and not config.get("motions"):

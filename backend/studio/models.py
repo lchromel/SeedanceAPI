@@ -17,6 +17,18 @@ class Asset(models.Model):
     mime = models.CharField(max_length=64)
     duration = models.PositiveIntegerField(default=0)
     created = models.DateTimeField(auto_now_add=True)
+    provider_id = models.CharField(max_length=200, blank=True)
+    provider_project = models.CharField(max_length=120, blank=True)
+    provider_status = models.CharField(max_length=32, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["owner", "provider_project", "provider_id"],
+                condition=~Q(provider_id=""),
+                name="unique_provider_asset_per_owner",
+            )
+        ]
 
 
 class Project(models.Model):

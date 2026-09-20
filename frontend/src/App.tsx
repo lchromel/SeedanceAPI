@@ -382,6 +382,22 @@ export default function App() {
           selected={selected}
           onClose={() => setLibrary(null)}
           onSelect={selectAsset}
+          onSync={(items) =>
+            setBoot((current) =>
+              current
+                ? {
+                    ...current,
+                    assets: [
+                      ...current.assets.filter(
+                        (a) =>
+                          a.kind !== "character" || a.source !== "byteplus",
+                      ),
+                      ...items,
+                    ],
+                  }
+                : current,
+            )
+          }
           onUpload={(a) => {
             setBoot({ ...boot, assets: [a, ...boot.assets] });
             selectAsset(a);

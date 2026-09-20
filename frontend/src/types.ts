@@ -6,6 +6,8 @@ export interface Asset {
   kind: Kind;
   url: string;
   duration: number;
+  source?: "byteplus" | "upload";
+  status?: string;
 }
 export interface Config {
   character: string | null;

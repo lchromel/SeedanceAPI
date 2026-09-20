@@ -114,3 +114,20 @@ Dialogue is distributed by word count across clips to avoid repeating the entire
 For an interactive local preview, run `run_local_jobs --watch` in a second terminal. It continuously processes simulation jobs and refuses to run unless both debug mode and the mock provider are enabled. Production uses the separate Celery workers and scheduler instead.
 
 See [VERIFICATION.md](VERIFICATION.md) for executed checks and remaining live-infrastructure checks.
+
+
+### BytePlus character catalog
+
+Character library syncs image assets from the configured BytePlus project (AIGC and
+LivenessFace groups), using server-only `BYTEPLUS_ACCESS_KEY_ID`,
+`BYTEPLUS_SECRET_ACCESS_KEY`, and `BYTEPLUS_ASSET_PROJECT` (default: `default`).
+The credentials require ListAssets and GetAsset permissions. Add characters in
+BytePlus Assets, then use Refresh in Yellow. Clothing, locations and motion
+references remain private uploads.
+
+Catalog records are scoped to the authenticated user; repeated syncs preserve
+selection IDs. Only Active characters are selectable. Missing assets are marked
+unavailable; a failed sync preserves the previous catalog. Previews are fetched
+through authenticated Yellow endpoints, restricted to the BytePlus asset storage
+host, bounded to 20 MB and re-encoded as JPEG. Provider URLs and credentials never
+reach the browser. Generation sends the original `asset://` ID.

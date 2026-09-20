@@ -14,7 +14,7 @@ from rest_framework.decorators import api_view
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
-from . import media, services, storage
+from . import byteplus_assets, media, provider, services, storage
 from .models import Asset, Chunk, Project, Run, Wallet
 from .serializers import ProjectConfig
 
@@ -24,7 +24,11 @@ def asset_data(asset):
         "id": str(asset.id),
         "name": asset.name,
         "kind": asset.kind,
-        "url": storage.url(asset.key),
+        "url": f"/api/characters/{asset.id}/preview"
+        if asset.provider_id
+        else storage.url(asset.key),
+        "source": "byteplus" if asset.provider_id else "upload",
+        "status": asset.provider_status if asset.provider_id else "Active",
         "duration": asset.duration,
     }
 
@@ -318,7 +322,9 @@ def local_media(request, key):
                 finally:
                     body.close()
 
-            response = StreamingHttpResponse(stream(), status=206 if "ContentRange" in result else 200)
+            response = StreamingHttpResponse(
+                stream(), status=206 if "ContentRange" in result else 200
+            )
             response._resource_closers.append(body.close)
         response["Content-Type"] = result.get("ContentType", "application/octet-stream")
         response["Content-Length"] = result["ContentLength"]
@@ -359,3 +365,42 @@ def index(request):
             status=503,
         )
     return HttpResponse(path.read_text(), content_type="text/html")
+
+
+@api_view(["POST"])
+def characters(request):
+    try:
+        return Response([asset_data(a) for a in byteplus_assets.sync(request.user)])
+    except byteplus_assets.CatalogError as exc:
+        return Response({"detail": str(exc)}, status=502)
+
+
+@api_view(["GET"])
+def character_preview(request, pk):
+    asset = get_object_or_404(Asset, pk=pk, owner=request.user, kind="character")
+    if not asset.provider_id:
+        raise Http404()
+    try:
+        item = byteplus_assets.detail(asset)
+        if item.get("AssetType") != "Image" or item.get("Id") != asset.provider_id:
+            raise ValueError()
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "preview"
+            provider.download(
+                item.get("URL", ""),
+                path,
+                allowed_hosts=["ark-media-asset-ap-southeast-1.tos-ap-southeast-1.volces.com"],
+                max_bytes=20 * 1024 * 1024,
+            )
+            with Image.open(path) as image:
+                if image.width * image.height > 25_000_000:
+                    raise ValueError()
+                image.thumbnail((640, 640))
+                buffer = io.BytesIO()
+                image.convert("RGB").save(buffer, "JPEG", quality=85)
+        response = HttpResponse(buffer.getvalue(), content_type="image/jpeg")
+        response["Cross-Origin-Resource-Policy"] = "same-origin"
+        return response
+    except Exception:
+        # No upstream URLs or response bodies in the browser or logs.
+        return HttpResponse(status=502)

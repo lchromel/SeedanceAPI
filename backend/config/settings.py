@@ -125,3 +125,7 @@ LOGGING = {
     "handlers": {"console": {"class": "logging.StreamHandler"}},
     "root": {"handlers": ["console"], "level": "WARNING"},
 }
+
+BYTEPLUS_ACCESS_KEY_ID = os.getenv("BYTEPLUS_ACCESS_KEY_ID", "")
+BYTEPLUS_SECRET_ACCESS_KEY = os.getenv("BYTEPLUS_SECRET_ACCESS_KEY", "")
+BYTEPLUS_ASSET_PROJECT = os.getenv("BYTEPLUS_ASSET_PROJECT", "default")

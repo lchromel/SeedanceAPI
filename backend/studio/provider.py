@@ -33,10 +33,16 @@ def payload(chunk):
     ]
     for asset_id in filter(None, ids):
         asset = Asset.objects.get(id=asset_id, owner_id=chunk.run.project.owner_id)
+        if asset.provider_id and asset.provider_status != "Active":
+            raise Rejected("This character is no longer available in BytePlus Assets.")
         content.append(
             {
                 "type": "image_url",
-                "image_url": {"url": storage.url(asset.key, provider=True)},
+                "image_url": {
+                    "url": f"asset://{asset.provider_id}"
+                    if asset.provider_id
+                    else storage.url(asset.key, provider=True)
+                },
                 "role": "reference_image",
             }
         )
@@ -87,7 +93,7 @@ def status(task_id):
     return data.get("status", ""), (data.get("content") or {}).get("video_url")
 
 
-def download(url, target):
+def download(url, target, *, allowed_hosts=None, max_bytes=512 * 1024 * 1024):
     parsed = urlparse(url)
     host = parsed.hostname or ""
     if (
@@ -97,7 +103,10 @@ def download(url, target):
         or parsed.port not in (None, 443)
     ):
         raise ValueError("Invalid output URL")
-    if not any(host == h or host.endswith("." + h) for h in settings.OUTPUT_HOSTS):
+    if not any(
+        host == h or host.endswith("." + h)
+        for h in (settings.OUTPUT_HOSTS if allowed_hosts is None else allowed_hosts)
+    ):
         raise ValueError("Output host is not allowed")
     addresses = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
     if any(not ipaddress.ip_address(item[4][0]).is_global for item in addresses):
@@ -132,7 +141,7 @@ def download(url, target):
         with open(target, "wb") as out:
             for block in response.stream(1024 * 1024):
                 count += len(block)
-                if count > 512 * 1024 * 1024:
+                if count > max_bytes:
                     raise ValueError("Output is too large")
                 out.write(block)
     finally:
