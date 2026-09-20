@@ -26,17 +26,19 @@ export function Button({
   );
 }
 export function IconButton({
+  className = "",
   icon,
   label,
   onClick,
 }: {
+  className?: string;
   icon: string;
   label: string;
   onClick: () => void;
 }) {
   return (
     <button
-      className="icon-button"
+      className={`icon-button ${className}`}
       aria-label={label}
       title={label}
       onClick={onClick}

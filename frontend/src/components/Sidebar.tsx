@@ -41,6 +41,13 @@ export function Sidebar({
           {(["character", "clothing", "location"] as Kind[]).map((k, i) => (
             <IconButton
               key={k}
+              className={
+                (k === "clothing"
+                  ? config.clothing.some((id) => !!asset(id))
+                  : !!asset(config[k as "character" | "location"]))
+                  ? "has-selection"
+                  : "is-empty"
+              }
               icon={["Person", "Shirt", "Location"][i]}
               label={k + " library"}
               onClick={() => onLibrary(k)}

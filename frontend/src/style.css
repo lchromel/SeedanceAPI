@@ -298,8 +298,11 @@ small,
   flex-direction: column;
   gap: 18px;
 }
-.collapsed nav .icon[src*="Shirt"] {
-  filter: brightness(3);
+.collapsed nav .is-empty .icon {
+  opacity: 0.35;
+}
+.collapsed nav .has-selection .icon {
+  opacity: 1;
 }
 .workspace {
   min-width: 0;
