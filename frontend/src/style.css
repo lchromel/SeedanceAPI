@@ -485,7 +485,7 @@ small,
   border-radius: 20px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   padding: 12px var(--generation-padding) var(--generation-padding);
   min-height: 0;
   flex: 1;
