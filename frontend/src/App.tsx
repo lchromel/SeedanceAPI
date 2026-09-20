@@ -76,9 +76,7 @@ export default function App() {
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [part, setPart] = useState<Part>("freeform");
-  const [collapsed, setCollapsed] = useState(
-    () => window.matchMedia("(max-width: 850px)").matches,
-  );
+  const [collapsed, setCollapsed] = useState(true);
   useEffect(() => {
     const media = window.matchMedia("(max-width: 850px)");
     const adapt = () => {
