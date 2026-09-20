@@ -230,7 +230,7 @@ function AssetPreview({ url }: { url: string }) {
   return failed ? (
     <span className="muted">Preview unavailable</span>
   ) : (
-    <img src={url} alt="" onError={() => setFailed(true)} />
+    <img loading="lazy" decoding="async" src={url} alt="" onError={() => setFailed(true)} />
   );
 }
 

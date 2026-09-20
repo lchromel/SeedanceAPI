@@ -26,7 +26,7 @@ def asset_data(asset):
         "kind": asset.kind,
         "url": f"/api/characters/{asset.id}/preview"
         if asset.provider_id
-        else storage.url(asset.key),
+        else (f"/api/assets/{asset.id}/preview" if asset.mime.startswith("image/") else storage.url(asset.key)),
         "source": "byteplus" if asset.provider_id else "upload",
         "status": asset.provider_status if asset.provider_id else "Active",
         "duration": asset.duration,
@@ -290,6 +290,10 @@ def upload(request):
         category=category if kind in references.CATEGORIES else "",
         analysis_status="pending" if kind in references.CATEGORIES else "",
     )
+    if kind != "motion":
+        buffer.seek(0)
+        with Image.open(buffer) as preview_image:
+            save_preview(asset, preview_image)
     warning = ""
     if kind in references.CATEGORIES:
         try:
@@ -392,38 +396,76 @@ def characters(request):
         return Response({"detail": str(exc)}, status=502)
 
 
+def preview_key(asset):
+    # Source identity is immutable; version changes invalidate old renderings.
+    import hashlib
+
+    source = f"{asset.provider_project}:{asset.provider_id}:{asset.key}"
+    digest = hashlib.sha256(source.encode()).hexdigest()[:16]
+    return f"{asset.owner_id}/previews/v1/{asset.id}-{digest}.jpg"
+
+
+def save_preview(asset, image):
+    image = image.copy()
+    image.thumbnail((640, 640), Image.Resampling.LANCZOS)
+    buffer = io.BytesIO()
+    image.convert("RGB").save(buffer, "JPEG", quality=78, optimize=True)
+    data = buffer.getvalue()
+    storage.put(preview_key(asset), io.BytesIO(data), "image/jpeg")
+    return data
+
+
 @api_view(["GET"])
 def character_preview(request, pk):
-    asset = get_object_or_404(Asset, pk=pk, owner=request.user, kind="character")
-    if not asset.provider_id:
+    return asset_preview_response(request, pk, character_only=True)
+
+
+@api_view(["GET"])
+def asset_preview(request, pk):
+    return asset_preview_response(request, pk)
+
+
+def asset_preview_response(request, pk, character_only=False):
+    asset = get_object_or_404(Asset, pk=pk, owner=request.user)
+    if character_only and (asset.kind != "character" or not asset.provider_id):
+        raise Http404()
+    if not asset.provider_id and not asset.mime.startswith("image/"):
         raise Http404()
     try:
-        item = byteplus_assets.detail(asset)
-        if item.get("AssetType") != "Image" or item.get("Id") != asset.provider_id:
-            raise ValueError()
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "preview"
-            provider.download(
-                item.get("URL", ""),
-                path,
-                allowed_hosts=["ark-media-asset-ap-southeast-1.tos-ap-southeast-1.volces.com"],
-                max_bytes=20 * 1024 * 1024,
-            )
-            with Image.open(path) as image:
-                if image.width * image.height > 25_000_000:
-                    raise ValueError()
-                # Focus character previews on the upper-right cell of a 3×3 grid.
-                # Generation still references the untouched BytePlus asset.
-                width, height = image.size
-                image = image.crop((width * 2 // 3, 0, width, max(1, height // 3)))
-                image.thumbnail((640, 640))
-                buffer = io.BytesIO()
-                image.convert("RGB").save(buffer, "JPEG", quality=85)
-        response = HttpResponse(buffer.getvalue(), content_type="image/jpeg")
+            try:
+                storage.fetch(preview_key(asset), path)
+                data = path.read_bytes()
+            except (FileNotFoundError, ClientError) as exc:
+                if isinstance(exc, ClientError) and exc.response.get("Error", {}).get("Code") not in {
+                    "NoSuchKey", "404", "403", "AccessDenied"
+                }:
+                    raise
+                if asset.provider_id:
+                    item = byteplus_assets.detail(asset)
+                    if item.get("AssetType") != "Image" or item.get("Id") != asset.provider_id:
+                        raise ValueError()
+                    provider.download(
+                        item.get("URL", ""), path,
+                        allowed_hosts=["ark-media-asset-ap-southeast-1.tos-ap-southeast-1.volces.com"],
+                        max_bytes=20 * 1024 * 1024,
+                    )
+                else:
+                    storage.fetch(asset.key, path)
+                with Image.open(path) as image:
+                    if image.width * image.height > 25_000_000:
+                        raise ValueError()
+                    if asset.provider_id:
+                        # Only the UI is cropped; generation keeps the original asset.
+                        width, height = image.size
+                        image = image.crop((width * 2 // 3, 0, width, max(1, height // 3)))
+                    data = save_preview(asset, image)
+        response = HttpResponse(data, content_type="image/jpeg")
         response["Cross-Origin-Resource-Policy"] = "same-origin"
         return response
     except Exception:
-        # No upstream URLs or response bodies in the browser or logs.
+        # Do not expose private upstream URLs or responses.
         return HttpResponse(status=502)
 
 

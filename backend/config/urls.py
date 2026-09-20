@@ -13,6 +13,7 @@ urlpatterns = [
     path("api/projects/<uuid:pk>/export", views.export),
     path("api/chunks/<uuid:pk>/retry", views.retry),
     path("api/assets", views.upload),
+    path("api/assets/<uuid:pk>/preview", views.asset_preview),
     path("api/assets/<uuid:pk>/analyze", views.analyze_asset),
     path("api/assets/<uuid:pk>", views.edit_asset),
     path("api/prompt/references", views.reference_prompt),

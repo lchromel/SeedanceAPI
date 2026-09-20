@@ -17,7 +17,7 @@ from PIL import Image
 from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIClient
 
-from . import media, provider
+from . import media, provider, storage
 from .billing import post
 from .models import Asset, Chunk, Ledger, Project, Run, Wallet
 from .services import generate, retry, split_duration
@@ -325,7 +325,10 @@ class StudioTests(TestCase):
                 "/api/assets", {"file": image, "kind": "character"}, format="multipart"
             )
             self.assertEqual(response.status_code, 201)
-            self.assertTrue(response.json()["url"].endswith(".jpg"))
+            self.assertTrue(response.json()["url"].endswith("/preview"))
+            with patch("studio.storage.fetch", wraps=storage.fetch) as fetch:
+                self.assertEqual(self.client.get(response.json()["url"]).status_code, 200)
+                self.assertEqual(fetch.call_count, 1)
             other = APIClient()
             other.force_authenticate(self.other)
             self.assertEqual(other.get(response.json()["url"]).status_code, 404)

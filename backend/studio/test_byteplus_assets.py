@@ -1,4 +1,5 @@
 import io
+import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -86,7 +87,13 @@ class BytePlusAssetsTests(TestCase):
                 byteplus_assets.call("ListAssets", {})
         self.assertNotIn("private-url", str(error.exception))
 
+    @override_settings(DEBUG=True, S3_BUCKET="")
     def test_preview_is_private_and_reencodes_image(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        media_settings = override_settings(MEDIA_ROOT=Path(folder.name))
+        media_settings.enable()
+        self.addCleanup(media_settings.disable)
         asset = Asset.objects.create(
             owner=self.user, kind="character", name="Hero", provider_id="asset-test"
         )
@@ -104,9 +111,12 @@ class BytePlusAssetsTests(TestCase):
                 "detail",
                 return_value={**self.item, "URL": "https://private-host/image"},
             ),
-            patch.object(provider, "download", side_effect=download),
+            patch.object(provider, "download", side_effect=download) as download_mock,
         ):
             response = self.client.get(url)
+            cached = self.client.get(url)
+            self.assertEqual(cached.content, response.content)
+            self.assertEqual(download_mock.call_count, 1)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "image/jpeg")
         preview = Image.open(io.BytesIO(response.content))
