@@ -31,7 +31,7 @@ export function Sidebar({
       <header>
         {!collapsed && <h1>Look</h1>}
         <IconButton
-          icon="Menu"
+          icon={collapsed ? "Menu" : "MenuCollapse"}
           label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           onClick={onCollapse}
         />
