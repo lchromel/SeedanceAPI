@@ -453,7 +453,6 @@ small,
 .export {
   width: 100%;
   margin-top: auto;
-  margin-bottom: calc(var(--generation-padding) + var(--stage-tabs-height) + var(--stage-tabs-gap));
   flex-shrink: 0;
 }
 .generation {
@@ -1016,9 +1015,6 @@ dialog::backdrop {
   }
 }
 @media (max-width: 620px) {
-  .export {
-    margin-bottom: 0;
-  }
   .editor {
     display: flex;
     flex-direction: column;
