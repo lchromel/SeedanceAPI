@@ -131,3 +131,28 @@ unavailable; a failed sync preserves the previous catalog. Previews are fetched
 through authenticated Yellow endpoints, restricted to the BytePlus asset storage
 host, bounded to 20 MB and re-encoded as JPEG. Provider URLs and credentials never
 reach the browser. Generation sends the original `asset://` ID.
+
+
+### AI reference descriptions and freeform enhancement
+
+Clothing and location uploads require a category. The server reads the sanitized
+private image, reduces it to 1024 px and sends it inline to the vision model;
+DeepSeek then writes the English name and reference description. Failed analysis
+keeps the upload and can be retried under Reference details. Existing uploads need
+a category and analysis there before being used in a new generation.
+
+Both models use the existing server-only `ARK_API_KEY`. Optional overrides:
+`REFERENCE_VISION_ENDPOINT_ID` and `DEEPSEEK_ENDPOINT_ID` (the legacy
+`BYTEPLUS_DEEPSEEK_ENDPOINT_ID` is also supported). Defaults match the original
+app: `seed-2-0-lite-260228` and `deepseek-v4-pro-260425`. These calls use the
+provider account's inference billing; they do not launch video-generation jobs.
+
+Improve with DeepSeek uses the current unsaved scene and selected reference
+descriptions. It replaces the scene direction only; dialogue stays untouched.
+Full prompt shows the auto-generated reference instructions plus the scene.
+Image order is always character, optional location, then selected clothing order.
+New generation snapshots freeze this order and the reference descriptions.
+
+Railway: set the service Pre-deploy Command to `python manage.py migrate --noinput`
+in service settings. The production service has this configured. Do not rely on
+an unconfigured railway.json being picked up automatically by a new service.

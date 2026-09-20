@@ -24,9 +24,11 @@ def payload(chunk):
         + ["clothing to wear"] * len(snapshot.get("clothing", []))
         + (["the location"] if snapshot.get("location") else [])
     )
-    references = " ".join(f"Reference image {i + 1} is {label}." for i, label in enumerate(labels))
+    references = snapshot.get("reference_instructions") or " ".join(
+        f"Reference image {i + 1} is {label}." for i, label in enumerate(labels)
+    )
     content = [{"type": "text", "text": references + "\n" + chunk.prompt}]
-    ids = [
+    ids = snapshot.get("reference_ids") or [
         snapshot.get("character"),
         *snapshot.get("clothing", []),
         snapshot.get("location"),

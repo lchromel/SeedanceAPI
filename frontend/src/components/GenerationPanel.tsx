@@ -1,6 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Asset, Bootstrap, Config, Part, Project } from "../types";
-import { time } from "../api";
+import { api, time } from "../api";
 import { Button, IconButton } from "./UI";
 import { ChunkStatusList, GenerationProgressCard } from "./Player";
 export function GenerationPanel({
@@ -9,6 +9,8 @@ export function GenerationPanel({
   onPart,
   onChange,
   onGenerate,
+  onEnhance,
+  enhancing,
   onRetry,
   onLibrary,
   busy,
@@ -20,6 +22,8 @@ export function GenerationPanel({
   onPart: (p: Part) => void;
   onChange: (c: Config) => void;
   onGenerate: () => void;
+  onEnhance: () => Promise<void>;
+  enhancing: boolean;
   onRetry: (ids: string[]) => void;
   onLibrary: () => void;
   busy: boolean;
@@ -27,6 +31,34 @@ export function GenerationPanel({
   assets: Asset[];
 }) {
   const c = project.config;
+  const [referenceText, setReferenceText] = useState("");
+  const [referenceError, setReferenceError] = useState("");
+  const configRef = useRef(c);
+  configRef.current = c;
+  const referenceKey = JSON.stringify([
+    project.id,
+    c.character,
+    c.location,
+    c.clothing,
+    assets
+      .filter((a) => [c.character, c.location, ...c.clothing].includes(a.id))
+      .map((a) => [a.id, a.category, a.description, a.analysisStatus]),
+  ]);
+  useEffect(() => {
+    let cancelled = false;
+    setReferenceText("");
+    setReferenceError("");
+    api<{ references: string }>("prompt/references", "POST", configRef.current)
+      .then((result) => {
+        if (!cancelled) setReferenceText(result.references);
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setReferenceError(e.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [referenceKey]);
   const run = project.runs.find((r) => r.part === part);
   const scroll = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -99,6 +131,26 @@ export function GenerationPanel({
                     onChange={(e) => onChange({ ...c, action: e.target.value })}
                   />
                 </label>
+                <div className="prompt-actions">
+                  <Button
+                    onClick={onEnhance}
+                    disabled={busy || !c.character || !c.action.trim()}
+                  >
+                    {enhancing ? "Improving…" : "Improve with DeepSeek"}
+                  </Button>
+                </div>
+                <details className="full-prompt">
+                  <summary>
+                    Full prompt · reference instructions included
+                  </summary>
+                  {referenceError ? (
+                    <p role="alert">{referenceError}</p>
+                  ) : (
+                    <pre>
+                      {[referenceText, c.action].filter(Boolean).join("\n\n")}
+                    </pre>
+                  )}
+                </details>
                 <label className="script-field">
                   <span>Dialogue</span>
                   <textarea

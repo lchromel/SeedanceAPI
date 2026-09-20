@@ -6,6 +6,10 @@ export interface Asset {
   kind: Kind;
   url: string;
   duration: number;
+  category?: string;
+  description?: string;
+  analysisStatus?: string;
+  warning?: string;
   source?: "byteplus" | "upload";
   status?: string;
 }
@@ -43,6 +47,7 @@ export interface Project {
   runs: Run[];
 }
 export interface Bootstrap {
+  assetCategories: Partial<Record<Kind, Record<string, string>>>;
   user: { id: number; name: string };
   wallet: { available: number; held: number; spent: number };
   pricing: number | null;

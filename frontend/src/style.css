@@ -1142,3 +1142,55 @@ dialog::backdrop {
     margin-left: auto;
   }
 }
+
+.library-toolbar {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.library-toolbar select,
+.asset-details select {
+  max-width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--studio-color-border, #45484e);
+  border-radius: 10px;
+  background: var(--studio-color-raised, #282a2e);
+  color: inherit;
+  font: inherit;
+}
+.library-entry {
+  min-width: 0;
+}
+.library-entry .library-asset {
+  width: 100%;
+}
+.asset-details {
+  padding: 10px 4px;
+  font-size: 12px;
+  color: var(--studio-color-muted, #adb3bd);
+}
+.asset-details summary,
+.full-prompt summary {
+  cursor: pointer;
+}
+.asset-details > div {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+}
+.asset-details p {
+  margin: 0;
+  line-height: 1.5;
+}
+.prompt-actions {
+  margin: 12px 0;
+}
+.full-prompt {
+  margin: 12px 0 20px;
+  font-size: 12px;
+}
+.full-prompt pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: 1.6;
+}

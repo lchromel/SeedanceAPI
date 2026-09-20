@@ -4,6 +4,7 @@ from django.conf import settings
 from django.db import transaction
 from rest_framework.exceptions import ValidationError
 
+from . import references
 from .billing import post
 from .models import Asset, Chunk, Project, Run
 
@@ -63,8 +64,13 @@ def generate(user, project_id, part, request_key):
         raise ValidationError("Describe the action first.")
     if part == "motion" and not config.get("motions"):
         raise ValidationError("Choose at least one motion preset.")
+    assets = references.ordered_assets(user, config)
+    references.require_analysis(assets)
+    references.validate_tags(config.get("action", ""), assets)
     snapshot = {
         **config,
+        "reference_ids": [str(a.pk) for a in assets],
+        "reference_instructions": references.instructions(assets),
         "provider": settings.GENERATION_PROVIDER,
         "model": settings.ARK_MODEL,
         "revision": project.revision,

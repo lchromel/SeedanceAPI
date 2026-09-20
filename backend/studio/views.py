@@ -14,7 +14,7 @@ from rest_framework.decorators import api_view
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
-from . import byteplus_assets, media, provider, services, storage
+from . import byteplus_assets, enhancer, media, provider, references, services, storage
 from .models import Asset, Chunk, Project, Run, Wallet
 from .serializers import ProjectConfig
 
@@ -30,6 +30,9 @@ def asset_data(asset):
         "source": "byteplus" if asset.provider_id else "upload",
         "status": asset.provider_status if asset.provider_id else "Active",
         "duration": asset.duration,
+        "category": asset.category,
+        "description": asset.description,
+        "analysisStatus": asset.analysis_status,
     }
 
 
@@ -83,6 +86,7 @@ def bootstrap(request):
                 "held": wallet.held,
                 "spent": wallet.spent,
             },
+            "assetCategories": references.CATEGORIES,
             "pricing": settings.CREDITS_PER_SECOND,
             "simulation": settings.GENERATION_PROVIDER == "mock",
             "projects": [
@@ -200,6 +204,9 @@ def upload(request):
     kind = request.data.get("kind")
     if not incoming or kind not in ("character", "clothing", "location", "motion"):
         raise ValidationError("Choose a file and its library.")
+    category = request.data.get("category", "")
+    if kind in references.CATEGORIES and category not in references.CATEGORIES[kind]:
+        raise ValidationError("Choose a category for this reference.")
     if incoming.size > 50 * 1024 * 1024:
         raise ValidationError("Files must be at most 50 MB.")
     asset_id = uuid.uuid4()
@@ -278,8 +285,16 @@ def upload(request):
         key=key,
         mime=mime,
         duration=duration,
+        category=category if kind in references.CATEGORIES else "",
+        analysis_status="pending" if kind in references.CATEGORIES else "",
     )
-    return Response(asset_data(asset), status=201)
+    warning = ""
+    if kind in references.CATEGORIES:
+        try:
+            enhancer.analyze(asset)
+        except enhancer.EnhancementError as exc:
+            warning = str(exc)
+    return Response({**asset_data(asset), "warning": warning}, status=201)
 
 
 @api_view(["GET", "HEAD"])
@@ -408,3 +423,36 @@ def character_preview(request, pk):
     except Exception:
         # No upstream URLs or response bodies in the browser or logs.
         return HttpResponse(status=502)
+
+
+@api_view(["POST"])
+def analyze_asset(request, pk):
+    asset = get_object_or_404(Asset, pk=pk, owner=request.user, kind__in=references.CATEGORIES)
+    category = request.data.get("category", asset.category)
+    if category not in references.CATEGORIES[asset.kind]:
+        raise ValidationError("Choose a category for this reference.")
+    try:
+        enhancer.analyze(asset, category=category)
+    except enhancer.EnhancementError as exc:
+        return Response({"detail": str(exc), "asset": asset_data(asset)}, status=502)
+    return Response(asset_data(asset))
+
+
+@api_view(["POST"])
+def reference_prompt(request):
+    serializer = ProjectConfig(data=request.data, context={"user": request.user})
+    serializer.is_valid(raise_exception=True)
+    config = serializer.validated_data
+    assets = references.ordered_assets(request.user, config)
+    text = references.instructions(assets)
+    return Response({"references": text, "categories": references.CATEGORIES})
+
+
+@api_view(["POST"])
+def enhance_prompt(request):
+    serializer = ProjectConfig(data=request.data, context={"user": request.user})
+    serializer.is_valid(raise_exception=True)
+    try:
+        return Response(enhancer.enhance(request.user, serializer.validated_data))
+    except enhancer.EnhancementError as exc:
+        return Response({"detail": str(exc)}, status=502)

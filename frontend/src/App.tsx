@@ -93,6 +93,7 @@ export default function App() {
   const [rename, setRename] = useState(false);
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [enhancing, setEnhancing] = useState(false);
   const [error, setError] = useState("");
   const generationKey = useRef<string | null>(null);
   useEffect(() => {
@@ -360,6 +361,31 @@ export default function App() {
             }}
             onChange={change}
             onGenerate={generate}
+            enhancing={enhancing}
+            onEnhance={async () => {
+              setEnhancing(true);
+              try {
+                await perform(async () => {
+                  const original = project;
+                  const result = await api<{ action: string }>(
+                    "prompt/enhance",
+                    "POST",
+                    original.config,
+                  );
+                  setProject((current) =>
+                    current?.id === original.id
+                      ? {
+                          ...current,
+                          config: { ...current.config, action: result.action },
+                        }
+                      : current,
+                  );
+                  setDirty(true);
+                });
+              } finally {
+                setEnhancing(false);
+              }
+            }}
             onRetry={(ids) =>
               perform(async () => {
                 for (const id of ids)
@@ -398,9 +424,33 @@ export default function App() {
                 : current,
             )
           }
+          categories={boot.assetCategories?.[library] || {}}
+          onUpdate={(a) =>
+            setBoot((current) =>
+              current
+                ? {
+                    ...current,
+                    assets: current.assets.map((item) =>
+                      item.id === a.id ? a : item,
+                    ),
+                  }
+                : current,
+            )
+          }
           onUpload={(a) => {
-            setBoot({ ...boot, assets: [a, ...boot.assets] });
-            selectAsset(a);
+            setBoot((current) =>
+              current
+                ? {
+                    ...current,
+                    assets: [
+                      a,
+                      ...current.assets.filter((item) => item.id !== a.id),
+                    ],
+                  }
+                : current,
+            );
+            if (!a.analysisStatus || a.analysisStatus === "ready")
+              selectAsset(a);
           }}
         />
       )}

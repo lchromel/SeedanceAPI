@@ -10,6 +10,8 @@ export function Library({
   onSelect,
   onUpload,
   onSync,
+  onUpdate,
+  categories,
 }: {
   kind: Kind;
   assets: Asset[];
@@ -18,8 +20,12 @@ export function Library({
   onSelect: (asset: Asset) => void;
   onUpload: (asset: Asset) => void;
   onSync: (assets: Asset[]) => void;
+  onUpdate: (asset: Asset) => void;
+  categories: Record<string, string>;
 }) {
   const input = useRef<HTMLInputElement>(null);
+  const [category, setCategory] = useState("");
+  const needsAnalysis = kind === "clothing" || kind === "location";
   const [busy, setBusy] = useState(kind === "character");
   const [error, setError] = useState("");
   const [characters, setCharacters] = useState<Asset[]>([]);
@@ -57,8 +63,32 @@ export function Library({
       const data = new FormData();
       data.append("file", file);
       data.append("kind", kind);
-      onUpload(await api<Asset>("assets", "POST", data));
+      data.append("category", category);
+      const asset = await api<Asset>("assets", "POST", data);
+      onUpload(asset);
+      if (asset.warning) setError(asset.warning);
     } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+      if (input.current) input.current.value = "";
+    }
+  }
+  async function analyze(asset: Asset, selectedCategory: string) {
+    setBusy(true);
+    setError("");
+    try {
+      onUpdate(
+        await api<Asset>(`assets/${asset.id}/analyze`, "POST", {
+          category: selectedCategory,
+        }),
+      );
+    } catch (e) {
+      onUpdate({
+        ...asset,
+        category: selectedCategory,
+        analysisStatus: "failed",
+      });
       setError((e as Error).message);
     } finally {
       setBusy(false);
@@ -77,13 +107,31 @@ export function Library({
               ? "Video references · 4–120 seconds"
               : "Your private image library"}
         </span>
+        {needsAnalysis && (
+          <select
+            aria-label="Upload category"
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            disabled={busy}
+          >
+            <option value="">Choose category</option>
+            {Object.entries(categories).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        )}
         {kind === "character" ? (
           <Button onClick={() => setRefresh((n) => n + 1)} disabled={busy}>
             {busy ? "Syncing…" : "Refresh"}
           </Button>
         ) : (
-          <Button onClick={() => input.current?.click()} disabled={busy}>
-            {busy ? "Uploading…" : "Upload"}
+          <Button
+            onClick={() => input.current?.click()}
+            disabled={busy || (needsAnalysis && !category)}
+          >
+            {busy ? (needsAnalysis ? "Analyzing…" : "Uploading…") : "Upload"}
             <Icon name="Plus" size={18} />
           </Button>
         )}
@@ -106,30 +154,55 @@ export function Library({
       )}
       <div className="library-grid">
         {visible.map((a) => (
-          <button
-            key={a.id}
-            className={`library-asset ${selected.includes(a.id) ? "chosen" : ""}`}
-            disabled={
-              kind === "character" && (busy || !!error || a.status !== "Active")
-            }
-            onClick={() => onSelect(a)}
-          >
-            {kind === "motion" ? (
-              <video src={a.url} muted playsInline preload="metadata" />
-            ) : (
-              <AssetPreview key={`${a.id}-${refresh}`} url={a.url} />
+          <div className="library-entry" key={a.id}>
+            <button
+              className={`library-asset ${selected.includes(a.id) ? "chosen" : ""}`}
+              disabled={
+                busy ||
+                (kind === "character" && (!!error || a.status !== "Active")) ||
+                (needsAnalysis && a.analysisStatus !== "ready")
+              }
+              onClick={() => onSelect(a)}
+            >
+              {kind === "motion" ? (
+                <video src={a.url} muted playsInline preload="metadata" />
+              ) : (
+                <AssetPreview key={`${a.id}-${refresh}`} url={a.url} />
+              )}
+              <span>{a.name}</span>
+              {kind === "character" && a.status !== "Active" && (
+                <small>{a.status}</small>
+              )}
+              {kind === "motion" && <small>{time(a.duration)} max</small>}
+              {needsAnalysis && (
+                <small>
+                  {categories[a.category || ""] || "Choose category"}
+                  {a.analysisStatus !== "ready" ? " · Needs analysis" : ""}
+                </small>
+              )}
+              {selected.includes(a.id) && (
+                <span className="selected-check">
+                  <Icon name="Check" />
+                </span>
+              )}
+            </button>
+            {needsAnalysis && (
+              <details className="asset-details">
+                <summary>
+                  {a.analysisStatus === "ready"
+                    ? "Reference details"
+                    : "Analyze reference"}
+                </summary>
+                <AssetDetails
+                  key={`${a.id}-${a.category}`}
+                  asset={a}
+                  categories={categories}
+                  busy={busy}
+                  onAnalyze={analyze}
+                />
+              </details>
             )}
-            <span>{a.name}</span>
-            {kind === "character" && a.status !== "Active" && (
-              <small>{a.status}</small>
-            )}
-            {kind === "motion" && <small>{time(a.duration)} max</small>}
-            {selected.includes(a.id) && (
-              <span className="selected-check">
-                <Icon name="Check" />
-              </span>
-            )}
-          </button>
+          </div>
         ))}
       </div>
       {!busy && !error && visible.length === 0 && (
@@ -153,5 +226,43 @@ function AssetPreview({ url }: { url: string }) {
     <span className="muted">Preview unavailable</span>
   ) : (
     <img src={url} alt="" onError={() => setFailed(true)} />
+  );
+}
+
+function AssetDetails({
+  asset,
+  categories,
+  busy,
+  onAnalyze,
+}: {
+  asset: Asset;
+  categories: Record<string, string>;
+  busy: boolean;
+  onAnalyze: (asset: Asset, category: string) => Promise<void>;
+}) {
+  const [category, setCategory] = useState(asset.category || "");
+  return (
+    <div>
+      <select
+        aria-label={`Category for ${asset.name}`}
+        value={category}
+        disabled={busy}
+        onChange={(e) => setCategory(e.target.value)}
+      >
+        <option value="">Choose category</option>
+        {Object.entries(categories).map(([value, label]) => (
+          <option value={value} key={value}>
+            {label}
+          </option>
+        ))}
+      </select>
+      {asset.description && <p>{asset.description}</p>}
+      <Button
+        disabled={busy || !category}
+        onClick={() => onAnalyze(asset, category)}
+      >
+        {busy ? "Analyzing…" : "Analyze & rename"}
+      </Button>
+    </div>
   );
 }
