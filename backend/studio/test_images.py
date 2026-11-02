@@ -203,6 +203,7 @@ class ImageTests(TestCase):
             [
                 '{"images":[{"image":1,"description":"Red cup"}]}',
                 "Use Image 2 for the cup.",
+                "Use Image 2 for the cup.",
             ],
         ):
             with patch.object(enhancer, "chat", side_effect=results):
@@ -215,6 +216,121 @@ class ImageTests(TestCase):
                     format="json",
                 )
                 self.assertEqual(response.status_code, 502)
+
+    def test_enhancement_accepts_unambiguous_reference_formats_for_two_image_edits(self):
+        refs = [self.upload_image().data["id"], self.upload_image().data["id"]]
+        vision = json.dumps(
+            {
+                "images": [
+                    {"image": 1, "description": "A person standing in a sunlit street."},
+                    {"image": 2, "description": "A front-facing portrait of an adult man."},
+                ]
+            }
+        )
+        for prompt in (
+            "Edit the first image using the man's face from the second image. Preserve the scene.",
+            "Replace the face in Image#1 with the face from Image#2. Keep the pose and lighting.",
+            "Edit image1 using image2 as the facial reference. Keep the original composition.",
+            "Use Image #1 as the base photograph and @Image2 as the identity reference.",
+            "Use photo one as the scene and photo two for the face. Match the scene lighting.",
+            "Use the 1st photograph as the base and the 2nd photograph for the face.",
+        ):
+            with (
+                self.subTest(prompt=prompt),
+                patch.object(enhancer, "chat", side_effect=[vision, prompt]),
+            ):
+                response = self.client.post(
+                    "/api/images/enhance",
+                    {
+                        **self.data,
+                        "references": refs,
+                        "prompt": "замени лицо девушки на первой фотографии на мужчину со второй",
+                    },
+                    format="json",
+                )
+                self.assertEqual(response.status_code, 200, response.data)
+                self.assertEqual(response.data["prompt"], prompt)
+
+    def test_missing_reference_is_repaired_once_without_repeating_vision_or_losing_intent(self):
+        refs = [self.upload_image().data["id"], self.upload_image().data["id"]]
+        vision = json.dumps(
+            {
+                "images": [
+                    {"image": 1, "description": "A person in a sunlit street."},
+                    {"image": 2, "description": "A front-facing portrait of an adult man."},
+                ]
+            }
+        )
+        original = "замени лицо девушки на первой фотографии на мужчину со второй"
+        full_prompt = "Edit Image 1 using the man's face from Image 2. Preserve the pose, clothing, street and lighting."
+        with patch.object(
+            enhancer,
+            "chat",
+            side_effect=[
+                vision,
+                "Replace the face in the base photograph with the supplied man's face.",
+                full_prompt,
+            ],
+        ) as chat:
+            response = self.client.post(
+                "/api/images/enhance",
+                {
+                    **self.data,
+                    "references": refs,
+                    "prompt": original,
+                    "instructions": "Сохрани освещение",
+                },
+                format="json",
+            )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["prompt"], full_prompt)
+        self.assertEqual(chat.call_count, 3)
+        self.assertEqual(chat.call_args_list[0].args[0], images.settings.REFERENCE_VISION_MODEL)
+        self.assertEqual(chat.call_args_list[1].args[0], images.settings.DEEPSEEK_MODEL)
+        self.assertEqual(chat.call_args_list[2].args[0], images.settings.DEEPSEEK_MODEL)
+        retry_context = json.loads(chat.call_args_list[2].args[2])
+        self.assertEqual(retry_context["draft"], original)
+        self.assertEqual(retry_context["revisionInstructions"], "Сохрани освещение")
+        self.assertEqual(retry_context["referenceRepair"]["missingLabels"], ["Image 1", "Image 2"])
+        self.assertEqual(retry_context["referenceObservations"], json.loads(vision)["images"])
+        self.assertEqual(chat.call_args_list[2].kwargs["timeout"], (5, 15))
+        self.assertFalse(ImageGeneration.objects.exists())
+        self.assertFalse(Ledger.objects.exists())
+
+    def test_nonexistent_ordinal_reference_still_fails_after_one_repair(self):
+        asset = self.upload_image().data
+        with patch.object(
+            enhancer,
+            "chat",
+            side_effect=[
+                '{"images":[{"image":1,"description":"A red cup."}]}',
+                "Use the first photo and the third photo.",
+                "Use Image1 and Image3 for the cup.",
+            ],
+        ) as chat:
+            response = self.client.post(
+                "/api/images/enhance",
+                {
+                    **self.data,
+                    "references": [asset["id"]],
+                },
+                format="json",
+            )
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(chat.call_count, 3)
+        self.assertIn("unchanged", response.data["detail"])
+
+    def test_text_only_enhancement_accepts_scene_numbers_and_rejects_hallucinated_images(self):
+        with patch.object(
+            enhancer, "chat", return_value="A room with 2 chairs and 3 lamps."
+        ) as chat:
+            response = self.client.post("/api/images/enhance", self.data, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(chat.call_count, 1)
+        with patch.object(enhancer, "chat", return_value="Recreate the first image.") as chat:
+            response = self.client.post("/api/images/enhance", self.data, format="json")
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(chat.call_count, 2)
 
     def paid_job(self):
         response = self.start()

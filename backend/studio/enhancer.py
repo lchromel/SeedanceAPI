@@ -22,7 +22,7 @@ class EnhancementError(Exception):
     pass
 
 
-def chat(model, system, content, *, max_tokens=1800):
+def chat(model, system, content, *, max_tokens=1800, timeout=(5, 40)):
     if not settings.ARK_API_KEY:
         raise EnhancementError("AI assistance is not configured. Contact your administrator.")
     try:
@@ -39,7 +39,7 @@ def chat(model, system, content, *, max_tokens=1800):
                 "max_tokens": max_tokens,
                 "stream": False,
             },
-            timeout=(5, 40),
+            timeout=timeout,
             allow_redirects=False,
         )
         response.raise_for_status()

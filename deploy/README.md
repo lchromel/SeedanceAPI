@@ -226,5 +226,12 @@ For local simulation, explicitly set `CREDITS_PER_IMAGE=1` and use the existing
 and makes no generation request. Real DeepSeek assistance remains disabled
 without an ARK key, including in simulation mode.
 
+Image enhancement accepts equivalent reference wording such as Image1, Image #1,
+photo one or the first image. Unknown image numbers are still rejected. If a
+reference is omitted or misnumbered, DeepSeek gets one bounded text-only repair
+attempt with the original request and the same verified observations. Vision is
+not repeated; that repair adds one inference call only when needed. A failed
+repair preserves the user's draft.
+
 API reference: [BytePlus image generation](https://docs.byteplus.com/en/docs/modelark/image-generation-api),
 [Seedream 5 Pro examples](https://docs.byteplus.com/en/docs/modelark/seedream-5-0-pro).
