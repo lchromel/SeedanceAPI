@@ -1,5 +1,5 @@
 from django.urls import path
-from studio import auth, views
+from studio import auth, image_views, views
 
 urlpatterns = [
     path("health", views.health),
@@ -7,6 +7,8 @@ urlpatterns = [
     path("api/login", auth.sign_in),
     path("api/logout", auth.sign_out),
     path("api/bootstrap", views.bootstrap),
+    path("api/images", image_views.generations),
+    path("api/images/enhance", image_views.enhance_prompt),
     path("api/projects", views.projects),
     path("api/projects/<uuid:pk>", views.project_detail),
     path("api/projects/<uuid:pk>/generate", views.generate),

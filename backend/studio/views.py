@@ -15,7 +15,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
 from . import byteplus_assets, enhancer, media, provider, references, services, storage
-from .models import Asset, Chunk, Project, Run, Wallet
+from .models import Asset, Chunk, ImageGeneration, Project, Run, Wallet
 from .serializers import ProjectConfig
 
 
@@ -77,6 +77,8 @@ def project_data(project):
 
 @api_view(["GET"])
 def bootstrap(request):
+    from .images import configuration
+
     wallet, _ = Wallet.objects.get_or_create(user=request.user)
     return Response(
         {
@@ -89,6 +91,7 @@ def bootstrap(request):
             "assetCategories": references.CATEGORIES,
             "pricing": settings.CREDITS_PER_SECOND,
             "simulation": settings.GENERATION_PROVIDER == "mock",
+            "images": configuration(),
             "projects": [
                 {"id": str(p.id), "name": p.name}
                 for p in Project.objects.filter(owner=request.user).order_by("-updated")
@@ -202,7 +205,7 @@ def export(request, pk):
 def upload(request):
     incoming = request.FILES.get("file")
     kind = request.data.get("kind")
-    if not incoming or kind not in ("character", "clothing", "location", "motion"):
+    if not incoming or kind not in ("character", "clothing", "location", "motion", "image"):
         raise ValidationError("Choose a file and its library.")
     category = request.data.get("category", "")
     if kind in references.CATEGORIES and (
@@ -211,6 +214,8 @@ def upload(request):
         raise ValidationError("Choose a category for this reference.")
     if incoming.size > 50 * 1024 * 1024:
         raise ValidationError("Files must be at most 50 MB.")
+    if kind == "image" and incoming.size > 30 * 1024 * 1024:
+        raise ValidationError("Image references must be at most 30 MB.")
     asset_id = uuid.uuid4()
     duration = 0
     if kind == "motion":
@@ -267,6 +272,10 @@ def upload(request):
                 image.load()
                 image = image.convert("RGB")
                 image.thumbnail((2048, 2048))
+                if kind == "image" and (
+                    min(image.size) < 15 or not 1 / 16 <= image.width / image.height <= 16
+                ):
+                    raise ValueError()
                 buffer = io.BytesIO()
                 image.save(buffer, "JPEG", quality=90)
                 buffer.seek(0)
@@ -312,6 +321,7 @@ def local_media(request, key):
             Asset.objects.filter(owner=request.user, key=key).exists()
             or Run.objects.filter(project__owner=request.user, output_key=key).exists()
             or Chunk.objects.filter(run__project__owner=request.user, output_key=key).exists()
+            or ImageGeneration.objects.filter(owner=request.user, output_key=key).exists()
         )
         if not owned:
             raise Http404
@@ -354,7 +364,8 @@ def local_media(request, key):
             response["Content-Range"] = result["ContentRange"]
         response["Cross-Origin-Resource-Policy"] = "same-origin"
         if request.GET.get("download") == "1":
-            response["Content-Disposition"] = 'attachment; filename="video.mp4"'
+            filename = "image.jpg" if key.endswith(".jpg") else "video.mp4"
+            response["Content-Disposition"] = f'attachment; filename="{filename}"'
         return response
     if not settings.DEBUG:
         raise Http404
@@ -364,7 +375,7 @@ def local_media(request, key):
     return FileResponse(
         path.open("rb"),
         as_attachment=request.GET.get("download") == "1",
-        filename="video.mp4" if path.suffix == ".mp4" else "reference.jpg",
+        filename="video.mp4" if path.suffix == ".mp4" else ("image.jpg" if "/images/" in key else "reference.jpg"),
         content_type="video/mp4" if path.suffix == ".mp4" else "image/jpeg",
     )
 

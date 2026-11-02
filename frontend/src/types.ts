@@ -1,9 +1,10 @@
 export type Kind = "character" | "clothing" | "location" | "motion";
+export type StudioMode = "video" | "images";
 export type Part = "freeform" | "motion";
 export interface Asset {
   id: string;
   name: string;
-  kind: Kind;
+  kind: Kind | "image";
   url: string;
   duration: number;
   category?: string;
@@ -47,6 +48,15 @@ export interface Project {
   runs: Run[];
 }
 export interface Bootstrap {
+  images: {
+    model: string;
+    maxReferences: number;
+    ratios: string[];
+    resolutions: string[];
+    pricing: number | null;
+    assistanceEnabled: boolean;
+    generationEnabled: boolean;
+  };
   assetCategories: Partial<Record<Kind, Record<string, string>>>;
   user: { id: number; name: string };
   wallet: { available: number; held: number; spent: number };
@@ -55,4 +65,19 @@ export interface Bootstrap {
   projects: { id: string; name: string }[];
   assets: Asset[];
   history: { id: number; kind: string; amount: number; created: string }[];
+}
+export interface ImageGeneration {
+  id: string;
+  state: "queued" | "generating" | "downloading" | "review" | "ready" | "error";
+  prompt: string;
+  references: string[];
+  ratio: string;
+  resolution: string;
+  size: string;
+  simulation: boolean;
+  created: string;
+  cost: number;
+  error: string;
+  url: string | null;
+  downloadUrl: string | null;
 }

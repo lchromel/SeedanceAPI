@@ -1,4 +1,4 @@
-import type { Asset, Bootstrap, Config, Kind } from "../types";
+import type { Asset, Bootstrap, Config, Kind, StudioMode } from "../types";
 import { Button, Icon, IconButton } from "./UI";
 export function Sidebar({
   collapsed,
@@ -12,7 +12,11 @@ export function Sidebar({
   user,
   onHistory,
   onLogout,
+  mode,
+  onMode,
 }: {
+  mode: StudioMode;
+  onMode: (mode: StudioMode) => void;
   collapsed: boolean;
   onCollapse: () => void;
   config: Config;
@@ -29,22 +33,52 @@ export function Sidebar({
   return (
     <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
       <header>
-        {!collapsed && <h1>Look</h1>}
+        {!collapsed && <h1>Studio</h1>}
         <IconButton
           icon={collapsed ? "Menu" : "MenuCollapse"}
           label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           onClick={onCollapse}
         />
       </header>
-      {collapsed ? (
+      <nav className="studio-modes" aria-label="Studio sections">
+        {(["video", "images"] as StudioMode[]).map((item) => (
+          <button
+            key={item}
+            className="studio-mode"
+            aria-current={mode === item ? "page" : undefined}
+            aria-label={
+              item === "video" ? "Video generation" : "Image generation"
+            }
+            title={item === "video" ? "Video generation" : "Image generation"}
+            onClick={() => onMode(item)}
+          >
+            <Icon name={item === "video" ? "Play" : "Image"} />
+            {!collapsed && <span>{item === "video" ? "Video" : "Images"}</span>}
+          </button>
+        ))}
+      </nav>
+      {mode === "images" ? (
+        !collapsed && (
+          <div className="image-sidebar-note">
+            <h2>Seedream 5 Pro</h2>
+            <p>
+              Start with an idea.
+              <br />
+              Bring your references.
+            </p>
+          </div>
+        )
+      ) : collapsed ? (
         <nav aria-label="Look libraries">
           {(["character", "clothing", "location"] as Kind[]).map((k, i) => (
             <IconButton
               key={k}
               className={
-                (k === "clothing"
-                  ? config.clothing.some((id) => !!asset(id))
-                  : !!asset(config[k as "character" | "location"]))
+                (
+                  k === "clothing"
+                    ? config.clothing.some((id) => !!asset(id))
+                    : !!asset(config[k as "character" | "location"])
+                )
                   ? "has-selection"
                   : "is-empty"
               }

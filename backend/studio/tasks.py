@@ -11,6 +11,7 @@ from django.utils import timezone
 from . import media, provider, storage
 from .billing import post
 from .models import Chunk, LoginBucket, Run
+from .image_tasks import process_image
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,18 @@ logger = logging.getLogger(__name__)
 def dispatch():
     now = timezone.now()
     LoginBucket.objects.filter(window__lt=now - timedelta(days=1)).delete()
+    from .models import ImageGeneration
+
+    ImageGeneration.objects.filter(state="generating", lease_until__lt=now).update(
+        state="review", error="Submission needs administrator review. No automatic resubmission.",
+        lease_until=None,
+    )
+    for image_id in (
+        ImageGeneration.objects.filter(state__in=["queued", "downloading"])
+        .filter(Q(lease_until__isnull=True) | Q(lease_until__lt=now))
+        .values_list("id", flat=True)[:100]
+    ):
+        process_image.delay(str(image_id))
     # Durable pending rows survive broker outages and worker restarts.
     for chunk_id in (
         Chunk.objects.filter(cleanup_state="pending", state="ready")

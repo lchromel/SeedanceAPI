@@ -1,12 +1,21 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { api } from "./api";
-import type { Asset, Bootstrap, Config, Kind, Part, Project } from "./types";
+import type {
+  Asset,
+  Bootstrap,
+  Config,
+  Kind,
+  Part,
+  Project,
+  StudioMode,
+} from "./types";
 import { Button, Modal } from "./components/UI";
 import { Sidebar } from "./components/Sidebar";
 import { Player } from "./components/Player";
 import { GenerationPanel } from "./components/GenerationPanel";
 import { Library } from "./components/Library";
+import { ImageStudio } from "./components/ImageStudio";
 
 function Login({ onLogin }: { onLogin: () => void }) {
   const [busy, setBusy] = useState(false);
@@ -77,6 +86,7 @@ export default function App() {
   const [project, setProject] = useState<Project | null>(null);
   const [part, setPart] = useState<Part>("freeform");
   const [collapsed, setCollapsed] = useState(true);
+  const [mode, setMode] = useState<StudioMode>("video");
   useEffect(() => {
     const media = window.matchMedia("(max-width: 850px)");
     const adapt = () => {
@@ -99,11 +109,11 @@ export default function App() {
       .then((s) => setAuthenticated(!!s.user))
       .catch((e) => setError(e.message));
   }, []);
-  async function refresh() {
+  const refresh = useCallback(async () => {
     const b = await api<Bootstrap>("bootstrap");
     setBoot(b);
     return b;
-  }
+  }, []);
   useEffect(() => {
     if (!authenticated) return;
     let alive = true;
@@ -216,7 +226,7 @@ export default function App() {
     });
   }
   function selectAsset(a: Asset) {
-    if (!project) return;
+    if (!project || a.kind === "image") return;
     const c = project.config;
     if (a.kind === "clothing")
       change({
@@ -256,6 +266,12 @@ export default function App() {
   return (
     <div className={`studio ${collapsed ? "sidebar-collapsed" : ""}`}>
       <Sidebar
+        mode={mode}
+        onMode={(next) => {
+          setMode(next);
+          setLibrary(null);
+          setAccount(false);
+        }}
         collapsed={collapsed}
         onCollapse={() => setCollapsed(!collapsed)}
         config={project.config}
@@ -280,7 +296,7 @@ export default function App() {
           })
         }
       />
-      <main className="workspace">
+      <main className="workspace" hidden={mode !== "video"}>
         <header className="project-header">
           <div>
             <select
@@ -399,6 +415,24 @@ export default function App() {
           />
         </div>
       </main>
+      <ImageStudio
+        hidden={mode !== "images"}
+        boot={boot}
+        onRefresh={refresh}
+        onUpload={(asset) =>
+          setBoot((current) =>
+            current
+              ? {
+                  ...current,
+                  assets: [
+                    asset,
+                    ...current.assets.filter((item) => item.id !== asset.id),
+                  ],
+                }
+              : current,
+          )
+        }
+      />
       {library && (
         <Library
           kind={library}

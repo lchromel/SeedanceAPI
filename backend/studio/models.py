@@ -10,7 +10,7 @@ class Asset(models.Model):
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     kind = models.CharField(
         max_length=16,
-        choices=[(x, x) for x in ["character", "clothing", "location", "motion"]],
+        choices=[(x, x) for x in ["character", "clothing", "location", "motion", "image"]],
     )
     name = models.CharField(max_length=120)
     key = models.CharField(max_length=255)
@@ -129,3 +129,25 @@ class LoginBucket(models.Model):
     key = models.CharField(primary_key=True, max_length=64)
     count = models.PositiveIntegerField(default=0)
     window = models.DateTimeField()
+
+
+class ImageGeneration(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    request_key = models.UUIDField()
+    snapshot = models.JSONField()
+    cost = models.PositiveIntegerField()
+    state = models.CharField(max_length=20, default="queued", db_index=True)
+    output_key = models.CharField(max_length=255, blank=True)
+    provider_output_url = models.TextField(blank=True)
+    error = models.CharField(max_length=255, blank=True)
+    lease_until = models.DateTimeField(null=True)
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["owner", "request_key"], name="unique_image_generation_request"
+            )
+        ]

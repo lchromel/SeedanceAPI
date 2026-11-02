@@ -14,3 +14,20 @@
 - BytePlus model entitlement, input-reference restrictions, generated content continuity, real latency/cost, and provider-specific privacy terms.
 
 The local preview uses SQLite, a test account, explicitly labeled mock generation and a mock job runner. PostgreSQL was used separately for the backend verification suite. The mock provider creates neutral video and silent audio; it is not an AI generation result.
+
+## Image studio verification — 2026-11-02
+
+- Django: 82 tests on SQLite (80 passed, 2 existing PostgreSQL locking tests skipped).
+  Fifteen image tests cover private uploads/history/media, reference validation,
+  vision-to-DeepSeek context, supported output dimensions, credit reservation and
+  settlement, idempotent requests, ambiguous submission/reconciliation and download recovery.
+- Frontend: 4 existing tests passed; TypeScript/Vite production build passed.
+  Python lint, migration drift and whitespace checks passed.
+- Browser: uploaded two references in one chooser, entered a prompt, changed the
+  aspect ratio, generated and downloaded a simulated JPEG, and switched between
+  Images and Video with the image draft intact. Expanded and collapsed navigation
+  checked. Desktop 1440 px and mobile 390 px checked; no horizontal overflow or
+  broken images in the checked mobile view.
+- Paid Seedream/DeepSeek calls, model entitlement, production S3/Redis delivery,
+  production migration and deployment were not exercised. Local browser preview
+  used a separate temporary SQLite database and the explicit mock provider.

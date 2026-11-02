@@ -174,3 +174,57 @@ New generation snapshots freeze this order and the reference descriptions.
 Railway: set the service Pre-deploy Command to `python manage.py migrate --noinput`
 in service settings. The production service has this configured. Do not rely on
 an unconfigured railway.json being picked up automatically by a new service.
+
+### Image studio — Seedream 5 Pro
+
+The sidebar switches between Video and Images. Images accepts up to ten JPG, PNG
+or WebP references, 30 MB each, in attachment order (Image 1, Image 2, etc.). Uploads
+are sanitized and stored privately. The image draft remains available when
+switching sections. Generation history and completed files survive reloads.
+
+Improve with DeepSeek sends all attached images to the vision model first, then
+uses its observations to write a full English still-image prompt. Optional notes
+can be in any language. The returned prompt stays editable and supports Undo;
+an answer for an outdated draft never overwrites newer edits. Improvement does
+not start generation. It uses the existing server-only ARK key and vision/DeepSeek
+model overrides; these inference calls use the provider's billing.
+
+Set on web, generation worker and scheduler:
+
+- `CREDITS_PER_IMAGE`: a positive integer internal tariff for one generated image.
+  There is no default production tariff. The same internal tariff applies to all
+  offered sizes/reference counts; this is not a claim about provider pricing.
+- `SEEDREAM_ENDPOINT_ID`: optional Pro endpoint override; default model is
+  `dola-seedream-5-0-pro-260628`. `BYTEPLUS_SEEDREAM_ENDPOINT_ID` is also supported.
+- Existing `ARK_API_KEY`, private S3 settings and `PROVIDER_OUTPUT_HOSTS` must be
+  configured. The output allowlist must include the actual image result hosts.
+
+Apply migrations before restarting web, worker and beat. The existing Celery
+generation worker and scheduler also process image jobs; no additional service
+is needed. The adapter calls `/images/generations`, creates one image per request,
+and offers 1K, 1.5K and 2K with five aspect ratios, sent as explicit pixel sizes.
+There is no batch/streaming parameter or fallback to a different image model.
+
+Credits are reserved atomically with idempotent job creation, settled after the
+image is stored privately, and released on confirmed rejection. A timeout during
+paid submission leaves the job in `review`, retaining its reservation. Never
+blindly resubmit it. After checking the provider dashboard, either release a
+confirmed absent result or resume saving a confirmed generated result:
+
+```
+python manage.py reconcile_image JOB_UUID --confirmed-not-created
+python manage.py reconcile_image JOB_UUID --output-url VERIFIED_PROVIDER_IMAGE_URL
+```
+
+An interrupted download retries from the saved provider URL without another
+generation request. If that URL expires, an administrator must investigate the
+provider result before changing the reservation. The API never exposes provider
+result URLs to the browser; previews/downloads use authenticated private media.
+
+For local simulation, explicitly set `CREDITS_PER_IMAGE=1` and use the existing
+`run_local_jobs` command. Simulation produces a labeled neutral JPEG placeholder
+and makes no generation request. Real DeepSeek assistance remains disabled
+without an ARK key, including in simulation mode.
+
+API reference: [BytePlus image generation](https://docs.byteplus.com/en/docs/modelark/image-generation-api),
+[Seedream 5 Pro examples](https://docs.byteplus.com/en/docs/modelark/seedream-5-0-pro).
