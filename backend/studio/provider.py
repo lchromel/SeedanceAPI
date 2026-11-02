@@ -95,6 +95,21 @@ def status(task_id):
     return data.get("status", ""), (data.get("content") or {}).get("video_url")
 
 
+def delete_task(task_id):
+    response = requests.delete(
+        settings.ARK_BASE_URL + "/contents/generations/tasks/" + quote(task_id, safe=""),
+        headers={"Authorization": f"Bearer {settings.ARK_API_KEY}"},
+        timeout=(10, 30),
+        allow_redirects=False,
+    )
+    # A previous DELETE may have succeeded before the worker lost its response.
+    if response.status_code == 404:
+        return
+    response.raise_for_status()
+    if not 200 <= response.status_code < 300:
+        raise RuntimeError("Unexpected provider deletion response")
+
+
 def download(url, target, *, allowed_hosts=None, max_bytes=512 * 1024 * 1024):
     parsed = urlparse(url)
     host = parsed.hostname or ""

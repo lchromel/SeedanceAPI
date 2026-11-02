@@ -1,3 +1,4 @@
+import logging
 import tempfile
 from datetime import timedelta
 from pathlib import Path
@@ -11,11 +12,22 @@ from . import media, provider, storage
 from .billing import post
 from .models import Chunk, LoginBucket, Run
 
+logger = logging.getLogger(__name__)
+
 
 @shared_task
 def dispatch():
     now = timezone.now()
     LoginBucket.objects.filter(window__lt=now - timedelta(days=1)).delete()
+    # Durable pending rows survive broker outages and worker restarts.
+    for chunk_id in (
+        Chunk.objects.filter(cleanup_state="pending", state="ready")
+        .filter(Q(cleanup_lease_until__isnull=True) | Q(cleanup_lease_until__lt=now))
+        .filter(Q(cleanup_next_attempt__isnull=True) | Q(cleanup_next_attempt__lte=now))
+        .order_by("cleanup_next_attempt", "id")
+        .values_list("id", flat=True)[:100]
+    ):
+        cleanup_provider_task.delay(str(chunk_id))
     # A worker lost during submission may already have incurred a provider charge.
     Chunk.objects.filter(state="submitting", lease_until__lt=now).update(
         state="review",
@@ -55,7 +67,52 @@ def finish(chunk_id, state, key="", message=""):
         )
         chunk.state, chunk.output_key, chunk.error = state, key, message
         chunk.lease_until = None
+        if (
+            state == "ready" and key and chunk.provider_id
+            and chunk.run.snapshot.get("provider") == "byteplus"
+        ):
+            # Commit the deletion intent atomically with the stored output and billing.
+            chunk.cleanup_state = "pending"
+            chunk.cleanup_next_attempt = timezone.now()
         chunk.save()
+
+
+@shared_task
+def cleanup_provider_task(chunk_id):
+    now = timezone.now()
+    with transaction.atomic():
+        chunk = (
+            Chunk.objects.select_for_update(of=("self",))
+            .select_related("run").get(id=chunk_id)
+        )
+        if (
+            chunk.cleanup_state != "pending" or chunk.state != "ready"
+            or not chunk.output_key or not chunk.provider_id
+            or chunk.run.snapshot.get("provider") != "byteplus"
+            or (chunk.cleanup_lease_until and chunk.cleanup_lease_until > now)
+            or (chunk.cleanup_next_attempt and chunk.cleanup_next_attempt > now)
+        ):
+            return
+        chunk.cleanup_attempts += 1
+        chunk.cleanup_lease_until = now + timedelta(minutes=2)
+        chunk.save(update_fields=["cleanup_attempts", "cleanup_lease_until"])
+    try:
+        provider.delete_task(chunk.provider_id)
+    except Exception:
+        # Never put provider response bodies, URLs or credentials in stored errors.
+        logger.warning("Provider cleanup failed for chunk %s; retry scheduled", chunk.id)
+        Chunk.objects.filter(id=chunk.id, cleanup_state="pending").update(
+            cleanup_lease_until=None,
+            cleanup_next_attempt=timezone.now() + timedelta(
+                seconds=min(3600, 60 * 2 ** min(chunk.cleanup_attempts - 1, 6))
+            ),
+            cleanup_error="Provider deletion failed; retry scheduled.",
+        )
+        return
+    Chunk.objects.filter(id=chunk.id, cleanup_state="pending").update(
+        cleanup_state="deleted", provider_deleted_at=timezone.now(),
+        cleanup_lease_until=None, cleanup_next_attempt=None, cleanup_error="",
+    )
 
 
 @shared_task

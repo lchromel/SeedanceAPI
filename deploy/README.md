@@ -63,6 +63,21 @@ python manage.py reconcile_chunk CHUNK_UUID --confirmed-not-created
 
 Credit reservation, settlement and release use database transactions and unique ledger keys. Users can retry only confirmed failures. Successful clips are downloaded to private storage before settlement. Final assembly runs separately. An assembly error keeps the completed clips and retries assembly without generation charges.
 
+After a new BytePlus clip is downloaded, probed, uploaded to private storage and
+committed as ready, the same transaction records a pending provider cleanup.
+The existing Celery beat dispatcher (every 15 seconds) sends these to a separate
+cleanup task, which calls `DELETE /contents/generations/tasks/{id}`. Run database
+migrations before restarting web/worker/beat when deploying this change.
+Cleanup retries failures with exponential delays from 60 seconds up to one hour;
+expired worker leases are recovered automatically. HTTP 404 is treated as already
+deleted. Cleanup failures never change clip readiness or billing. Inspect the
+Chunk fields `cleanup_state`, `cleanup_attempts`, `cleanup_next_attempt`,
+`cleanup_error`, and `provider_deleted_at` for operational status; persistent
+authentication errors require correcting the provider credentials.
+Previously completed clips are not automatically enrolled by the migration.
+This deletes the provider task record; BytePlus does not document this endpoint
+as a guarantee of physical erasure from its CDN, backups or internal logs.
+
 Generation settings are snapshotted per run. Freeform and motion are separate runs. Export assembles their latest completed versions after checking compatible character/clothing/location/timing. Old runs and files remain retained. Retention/deletion policy must be chosen before sustained production use.
 
 ## Confidentiality and operations

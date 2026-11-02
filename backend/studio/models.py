@@ -80,6 +80,12 @@ class Chunk(models.Model):
     lease_until = models.DateTimeField(null=True)
     next_poll = models.DateTimeField(null=True)
     started = models.DateTimeField(null=True)
+    cleanup_state = models.CharField(max_length=16, blank=True, db_index=True)
+    cleanup_attempts = models.PositiveIntegerField(default=0)
+    cleanup_next_attempt = models.DateTimeField(null=True)
+    cleanup_lease_until = models.DateTimeField(null=True)
+    cleanup_error = models.CharField(max_length=255, blank=True)
+    provider_deleted_at = models.DateTimeField(null=True)
 
     class Meta:
         ordering = ["position"]
