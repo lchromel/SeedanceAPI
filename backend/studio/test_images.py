@@ -6,6 +6,8 @@ from datetime import timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import boto3
+from botocore.stub import Stubber
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import TestCase, override_settings
@@ -50,6 +52,39 @@ class ImageTests(TestCase):
         return self.client.post(
             "/api/assets", {"kind": "image", "file": stream}, format="multipart"
         )
+
+    @override_settings(S3_BUCKET="test-only-private-bucket")
+    def test_s3_upload_keeps_preview_source_after_the_transfer_closes_its_stream(self):
+        # Use the actual boto3 transfer implementation: upload_fileobj closes Body.
+        # A local filesystem or a mocked storage.put does not reproduce this failure.
+        s3 = boto3.client(
+            "s3",
+            region_name="us-east-1",
+            aws_access_key_id="test-only",
+            aws_secret_access_key="test-only",
+        )
+        for kind in ("image", "clothing", "location"):
+            with self.subTest(kind=kind), Stubber(s3) as stub:
+                stub.add_response("put_object", {})
+                stub.add_response("put_object", {})
+                stream = io.BytesIO()
+                Image.new("RGB", (160, 160), "red").save(stream, "JPEG")
+                stream.seek(0)
+                stream.name = "reference.jpeg"
+                with (
+                    patch.object(storage, "client", return_value=s3),
+                    patch.object(enhancer, "analyze"),
+                ):
+                    response = self.client.post(
+                        "/api/assets", {"kind": kind, "file": stream}, format="multipart"
+                    )
+                self.assertEqual(response.status_code, 201, response.data)
+                self.assertEqual(response.data["kind"], kind)
+                self.assertIn("/preview", response.data["url"])
+                self.assertTrue(
+                    Asset.objects.filter(pk=response.data["id"], owner=self.user).exists()
+                )
+                stub.assert_no_pending_responses()
 
     def test_authenticated_and_owner_scoped_history_and_media(self):
         job = self.start().data

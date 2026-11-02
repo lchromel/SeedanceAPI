@@ -287,7 +287,8 @@ def upload(request):
         ):
             raise ValidationError("Use a valid image up to 25 megapixels.")
         key, mime = f"{request.user.id}/assets/{asset_id}.jpg", "image/jpeg"
-        storage.put(key, buffer, mime)
+        # S3 upload_fileobj closes its input; keep the preview source independently owned.
+        storage.put(key, io.BytesIO(buffer.getvalue()), mime)
     asset = Asset.objects.create(
         id=asset_id,
         owner=request.user,
