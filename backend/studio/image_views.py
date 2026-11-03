@@ -2,8 +2,9 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework.fields import UUIDField
 from django.utils import timezone
+from django.shortcuts import get_object_or_404
 
-from . import enhancer, images, replacements, storage
+from . import enhancer, image_retries, images, replacements, storage
 from .models import ImageGeneration
 
 
@@ -33,6 +34,7 @@ def image_data(job):
         "originalId": job.snapshot.get("original_id"),
         "originalName": job.snapshot.get("original_name"),
         "originalIndex": job.snapshot.get("original_index"),
+        "regeneratedFrom": job.snapshot.get("regenerated_from"),
     }
 
 
@@ -94,3 +96,12 @@ def replacement_batch(request):
     serializer.is_valid(raise_exception=True)
     jobs = replacements.generate(request.user, serializer.validated_data)
     return Response([image_data(job) for job in jobs], status=201)
+
+
+@api_view(["POST"])
+def regenerate_image(request, pk):
+    source = get_object_or_404(ImageGeneration, pk=pk, owner=request.user)
+    serializer = image_retries.Regeneration(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    job = image_retries.regenerate(request.user, source, serializer.validated_data)
+    return Response(image_data(job), status=201)

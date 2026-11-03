@@ -4,21 +4,63 @@ import type {
   Asset,
   Bootstrap,
   ImageGeneration,
+  EditWorkflow,
+  IdentityLock,
   ReplacementRole,
 } from "../types";
 import { Button, Icon } from "./UI";
+import { runPromptQueue } from "../promptQueue";
 
-const roles: ReplacementRole[] = ["model", "clothing", "makeup", "location"];
+const allRoles: ReplacementRole[] = [
+  "model",
+  "clothing",
+  "makeup",
+  "hairstyle",
+  "location",
+];
+const workflowRoles: Record<EditWorkflow, ReplacementRole[]> = {
+  replacement: allRoles,
+  makeup: ["makeup", "hairstyle"],
+  wardrobe: ["clothing"],
+};
+const workflowCopy = {
+  replacement: {
+    title: "Original photographs",
+    add: "Add original photographs",
+    help: "One original, one individual prompt, one separate generation.",
+    empty: "Build a series from your originals",
+    detail:
+      "Each photograph keeps its own pose, framing and individual prompt.",
+  },
+  makeup: {
+    title: "Original portrait",
+    add: "Add a portrait",
+    help: "Change makeup and hair while keeping the same face.",
+    empty: "Start with a clear portrait",
+    detail:
+      "Add a makeup reference, a hairstyle reference, or both. The original supplies identity, expression and framing.",
+  },
+  wardrobe: {
+    title: "Person or body sheet",
+    add: "Add a person or body sheet",
+    help: "Dress the same person in the referenced outfit, across every existing view.",
+    empty: "Start with a full-body photo or sheet",
+    detail:
+      "Upload a person or multi-view sheet, then add clothing references. Pose, body proportions and face stay consistent.",
+  },
+};
 const labels: Record<ReplacementRole, string> = {
   model: "New model",
   clothing: "Clothing",
   makeup: "Makeup",
+  hairstyle: "Hairstyle",
   location: "Location",
 };
 const emptyRoles = (): Record<ReplacementRole, Asset | null> => ({
   model: null,
   clothing: null,
   makeup: null,
+  hairstyle: null,
   location: null,
 });
 type Original = {
@@ -40,35 +82,54 @@ const statusLabels: Record<ImageGeneration["state"], string> = {
 };
 
 export function ReplacementStudio({
+  workflow,
   hidden,
   boot,
   jobs,
   onUpload,
   onJobs,
   onRefresh,
+  identity,
+  onIdentity,
+  onFile,
+  onRegenerate,
+  retrying,
 }: {
+  workflow: EditWorkflow;
   hidden: boolean;
   boot: Bootstrap;
   jobs: ImageGeneration[];
   onUpload: (asset: Asset) => void;
   onJobs: (jobs: ImageGeneration[]) => void;
   onRefresh: () => Promise<unknown>;
+  identity: IdentityLock;
+  onIdentity: (value: IdentityLock) => void;
+  onFile: (id: string, file: File) => void;
+  onRegenerate: (job: ImageGeneration) => Promise<ImageGeneration>;
+  retrying: string[];
 }) {
+  const roles = workflowRoles[workflow];
+  const copy = workflowCopy[workflow];
+  const maxOriginals =
+    workflow === "replacement" ? boot.images.maxOriginals : 1;
   const [originals, setOriginals] = useState<Original[]>([]);
   const [replacements, setReplacements] = useState(emptyRoles);
   const [wishes, setWishes] = useState("");
+  const [extras, setExtras] = useState<{ asset: Asset; label: string }[]>([]);
+  const [parallelism, setParallelism] = useState(3);
   const [keepTattoos, setKeepTattoos] = useState(false);
   const [ratio, setRatio] = useState("original");
   const [resolution, setResolution] = useState("2K");
   const [busy, setBusy] = useState<"upload" | "prepare" | "submit" | null>(
     null,
   );
-  const [preparingId, setPreparingId] = useState<string | null>(null);
+  const [preparingIds, setPreparingIds] = useState<string[]>([]);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [dragging, setDragging] = useState(false);
   const originalInput = useRef<HTMLInputElement>(null);
+  const extraInput = useRef<HTMLInputElement>(null);
   const roleInputs = useRef<
     Partial<Record<ReplacementRole, HTMLInputElement | null>>
   >({});
@@ -88,20 +149,35 @@ export function ReplacementStudio({
     roles.map((role) => [role, replacements[role]?.id || null]),
   );
   const replacementOrder = [
-    ...new Set(roles.map((role) => replacements[role]?.id).filter(Boolean)),
+    ...new Set([
+      ...roles.map((role) => replacements[role]?.id).filter(Boolean),
+      ...extras.map((item) => item.asset.id),
+    ]),
   ];
+  const extraPayload = extras.map((item) => ({
+    asset: item.asset.id,
+    label: item.label,
+  }));
   const fingerprint = JSON.stringify([
     roleIds,
     wishes,
     ratio,
     resolution,
     keepTattoos,
+    extraPayload,
+    identity,
   ]);
   const stamp = (row: Original) => JSON.stringify([fingerprint, row.notes]);
   const prepared = originals.filter(
     (row) => row.prompt.trim() && row.preparedFor === stamp(row),
   ).length;
   const locked = !!busy || submitted;
+  const validReferences =
+    extras.every((item) => item.label.trim()) &&
+    (workflow !== "makeup" ||
+      !!replacements.makeup ||
+      !!replacements.hairstyle) &&
+    (workflow !== "wardrobe" || !!replacements.clothing || !!extras.length);
   const price = boot.images.pricing;
   const insufficient =
     boot.creditsEnabled &&
@@ -128,7 +204,10 @@ export function ReplacementStudio({
     form.append("kind", "image");
     form.append("file", file);
     const asset = await api<Asset>("assets", "POST", form);
-    if (alive.current) onUpload(asset);
+    if (alive.current) {
+      onUpload(asset);
+      onFile(asset.id, file);
+    }
     return asset;
   }
   async function attachOriginals(input: FileList | File[]) {
@@ -136,9 +215,9 @@ export function ReplacementStudio({
     const files = Array.from(input);
     try {
       validateFiles(files);
-      if (originals.length + files.length > boot.images.maxOriginals)
+      if (originals.length + files.length > maxOriginals)
         throw new Error(
-          `Add up to ${boot.images.maxOriginals} originals in one series.`,
+          `Add up to ${maxOriginals} original${maxOriginals === 1 ? "" : "s"} in this mode.`,
         );
     } catch (e) {
       setError((e as Error).message);
@@ -174,6 +253,13 @@ export function ReplacementStudio({
     if (running.current || submitted) return;
     try {
       validateFiles([file]);
+      if (
+        !replacements[role] &&
+        replacementOrder.length + 1 >= boot.images.maxReferences
+      )
+        throw new Error(
+          `Use up to ${boot.images.maxReferences - 1} replacement and extra references combined.`,
+        );
     } catch (e) {
       setError((e as Error).message);
       return;
@@ -195,73 +281,129 @@ export function ReplacementStudio({
       if (input) input.value = "";
     }
   }
-  async function prepare(rows: Original[]) {
+  async function attachExtras(input: FileList) {
     if (running.current || submitted) return;
+    const files = Array.from(input);
+    try {
+      validateFiles(files);
+      if (replacementOrder.length + files.length >= boot.images.maxReferences)
+        throw new Error(
+          `Use up to ${boot.images.maxReferences - 1} replacement and extra references combined.`,
+        );
+    } catch (e) {
+      setError((e as Error).message);
+      return;
+    }
+    running.current = true;
+    setBusy("upload");
+    setError("");
+    edit();
+    try {
+      for (const file of files) {
+        try {
+          const asset = await upload(file);
+          if (alive.current)
+            setExtras((items) => [...items, { asset, label: "" }]);
+        } catch (e) {
+          if (alive.current) setError(`${file.name}: ${(e as Error).message}`);
+        }
+      }
+    } finally {
+      running.current = false;
+      if (alive.current) setBusy(null);
+      if (extraInput.current) extraInput.current.value = "";
+    }
+  }
+  async function prepare(rows: Original[]) {
+    if (running.current || submitted || !validReferences) return;
     const currentVersion = version.current;
     running.current = true;
     stop.current = false;
     setBusy("prepare");
     setError("");
-    let completed = 0;
+    let completed = 0,
+      succeeded = 0,
+      failed = 0;
+    const shouldStop = () =>
+      stop.current || !alive.current || version.current !== currentVersion;
     try {
-      for (const [i, row] of rows.entries()) {
-        if (
-          stop.current ||
-          !alive.current ||
-          version.current !== currentVersion
-        )
-          break;
-        setPreparingId(row.asset.id);
-        setProgress(`Preparing prompt ${i + 1} of ${rows.length}…`);
-        try {
-          const result = await api<{ prompt: string }>(
-            "images/replacements/prompt",
-            "POST",
-            {
-              original: row.asset.id,
-              replacements: roleIds,
-              instructions: wishes,
-              notes: row.notes,
-              prompt: row.prompt,
-              ratio,
-              resolution,
-              keepTattoos,
-            },
-          );
-          if (!alive.current || version.current !== currentVersion) break;
+      await runPromptQueue(
+        rows,
+        parallelism,
+        async (row) => {
+          setPreparingIds((ids) => [...ids, row.asset.id]);
           setOriginals((current) =>
             current.map((item) =>
-              item.asset.id === row.asset.id
-                ? {
-                    ...item,
-                    prompt: result.prompt,
-                    preparedFor: stamp(row),
-                    error: "",
-                  }
-                : item,
+              item.asset.id === row.asset.id ? { ...item, error: "" } : item,
             ),
           );
-          completed += 1;
-        } catch (e) {
-          if (alive.current)
+          try {
+            const result = await api<{ prompt: string }>(
+              "images/replacements/prompt",
+              "POST",
+              {
+                original: row.asset.id,
+                replacements: roleIds,
+                instructions: wishes,
+                notes: row.notes,
+                prompt: row.prompt,
+                ratio,
+                resolution,
+                keepTattoos,
+                workflow,
+                extras: extraPayload,
+                identity,
+              },
+            );
+            if (!alive.current || version.current !== currentVersion) return;
             setOriginals((current) =>
               current.map((item) =>
                 item.asset.id === row.asset.id
-                  ? { ...item, error: (e as Error).message }
+                  ? {
+                      ...item,
+                      prompt: result.prompt,
+                      preparedFor: stamp(row),
+                      error: "",
+                    }
                   : item,
               ),
             );
-        }
-      }
+            succeeded += 1;
+          } catch (e) {
+            failed += 1;
+            if (alive.current)
+              setOriginals((current) =>
+                current.map((item) =>
+                  item.asset.id === row.asset.id
+                    ? {
+                        ...item,
+                        error: (e as Error).message,
+                        preparedFor: null,
+                      }
+                    : item,
+                ),
+              );
+          } finally {
+            completed += 1;
+            if (alive.current) {
+              setPreparingIds((ids) => ids.filter((id) => id !== row.asset.id));
+              setProgress(
+                `${completed} / ${rows.length} finished · ${succeeded} ready · ${failed} failed`,
+              );
+            }
+          }
+        },
+        shouldStop,
+      );
       if (alive.current)
         setProgress(
-          `${completed} individual prompt${completed === 1 ? "" : "s"} prepared. Review each before generating.`,
+          `${succeeded} prompts ready, ${failed} failed${completed < rows.length ? `, ${rows.length - completed} not started` : ""}. Review each before generating.`,
         );
     } finally {
       running.current = false;
       if (alive.current) {
         setBusy(null);
-        setPreparingId(null);
+        setPreparingIds([]);
       }
     }
   }
@@ -270,7 +412,8 @@ export function ReplacementStudio({
       running.current ||
       submitted ||
       !originals.length ||
-      prepared !== originals.length
+      prepared !== originals.length ||
+      !validReferences
     )
       return;
     running.current = true;
@@ -292,6 +435,9 @@ export function ReplacementStudio({
           ratio,
           resolution,
           keepTattoos,
+          workflow,
+          extras: extraPayload,
+          identity,
           requestKey: requestKey.current,
         },
       );
@@ -320,39 +466,51 @@ export function ReplacementStudio({
     edit();
     setOriginals([]);
     setReplacements(emptyRoles());
+    setExtras([]);
     setWishes("");
     setKeepTattoos(false);
     setSubmitted(false);
     setError("");
   }
+  async function regenerate(job: ImageGeneration, rowId?: string) {
+    setError("");
+    try {
+      const created = await onRegenerate(job);
+      if (alive.current && rowId)
+        setOriginals((rows) =>
+          rows.map((row) =>
+            row.asset.id === rowId ? { ...row, jobId: created.id } : row,
+          ),
+        );
+    } catch (e) {
+      if (alive.current) setError((e as Error).message);
+    }
+  }
   const past = jobs.filter(
     (job) =>
-      job.mode === "replacement" &&
-      !originals.some((row) => row.jobId === job.id),
+      job.mode === workflow && !originals.some((row) => row.jobId === job.id),
   );
   return (
     <div className="replacement-workbench" hidden={hidden}>
       <section
         className="replacement-originals"
-        aria-label="Original photographs and individual prompts"
+        aria-label={`${copy.title} and individual prompts`}
       >
         <header className="replacement-heading">
           <div>
             <small>PART 1</small>
-            <h2>Original photographs</h2>
+            <h2>{copy.title}</h2>
           </div>
           <span>
-            {originals.length} / {boot.images.maxOriginals}
+            {originals.length} / {maxOriginals}
           </span>
         </header>
-        <p className="replacement-help">
-          One original, one individual prompt, one separate generation.
-        </p>
+        <p className="replacement-help">{copy.help}</p>
         <input
           ref={originalInput}
           hidden
           type="file"
-          multiple
+          multiple={workflow === "replacement"}
           accept="image/jpeg,image/png,image/webp"
           onChange={(e) => {
             if (e.target.files) void attachOriginals(e.target.files);
@@ -376,9 +534,12 @@ export function ReplacementStudio({
           >
             <Icon name="Plus" />
             <span>
-              {busy === "upload" ? "Uploading…" : "Add original photographs"}
+              {busy === "upload" ? "Uploading…" : copy.add}
               <small>
-                Drop multiple photos or browse · JPG, PNG, WebP · 30 MB each
+                {workflow === "replacement"
+                  ? "Drop multiple photos or browse"
+                  : "Drop one image or browse"}{" "}
+                · JPG, PNG, WebP · 30 MB each
               </small>
             </span>
           </button>
@@ -399,7 +560,7 @@ export function ReplacementStudio({
               <article
                 className="replacement-original"
                 key={row.asset.id}
-                aria-busy={preparingId === row.asset.id}
+                aria-busy={preparingIds.includes(row.asset.id)}
               >
                 <header>
                   <div>
@@ -426,7 +587,7 @@ export function ReplacementStudio({
                   <small>
                     {job
                       ? statusLabels[job.state]
-                      : preparingId === row.asset.id
+                      : preparingIds.includes(row.asset.id)
                         ? "Writing prompt…"
                         : ready
                           ? "Prompt ready"
@@ -517,10 +678,16 @@ export function ReplacementStudio({
                     <div className="replacement-row-actions">
                       {!submitted && (
                         <Button
-                          disabled={!!busy || !boot.images.assistanceEnabled}
+                          disabled={
+                            !!busy ||
+                            !validReferences ||
+                            !boot.images.assistanceEnabled
+                          }
                           onClick={() => prepare([row])}
                         >
-                          Improve this prompt
+                          {row.error
+                            ? "Retry writing prompt"
+                            : "Improve this prompt"}
                         </Button>
                       )}
                       {job?.downloadUrl && (
@@ -529,6 +696,20 @@ export function ReplacementStudio({
                           Download
                         </a>
                       )}
+                      {job &&
+                        ["ready", "error", "expired"].includes(job.state) && (
+                          <Button
+                            disabled={
+                              retrying.includes(job.id) ||
+                              !boot.images.generationEnabled
+                            }
+                            onClick={() => void regenerate(job, row.asset.id)}
+                          >
+                            {retrying.includes(job.id)
+                              ? "Starting…"
+                              : "Regenerate this image"}
+                          </Button>
+                        )}
                       {job?.expiresAt && job.state === "ready" && (
                         <small>
                           Download before{" "}
@@ -549,10 +730,8 @@ export function ReplacementStudio({
         {!originals.length && (
           <div className="replacement-empty">
             <Icon name="Image" size={36} />
-            <h3>Build a series from your originals</h3>
-            <p>
-              Each photograph keeps its own pose, framing and individual prompt.
-            </p>
+            <h3>{copy.empty}</h3>
+            <p>{copy.detail}</p>
           </div>
         )}
         {!!past.length && (
@@ -579,6 +758,19 @@ export function ReplacementStudio({
                       Download
                     </a>
                   )}
+                  {["ready", "error", "expired"].includes(job.state) && (
+                    <Button
+                      disabled={
+                        retrying.includes(job.id) ||
+                        !boot.images.generationEnabled
+                      }
+                      onClick={() => void regenerate(job)}
+                    >
+                      {retrying.includes(job.id)
+                        ? "Starting…"
+                        : "Regenerate image"}
+                    </Button>
+                  )}
                   <details className="image-prompt-details">
                     <summary>Individual prompt</summary>
                     <p>{job.prompt}</p>
@@ -596,12 +788,21 @@ export function ReplacementStudio({
         <div className="replacement-heading">
           <div>
             <small>PART 2</small>
-            <h2>What changes?</h2>
+            <h2>
+              {workflow === "makeup"
+                ? "Makeup & hairstyle"
+                : workflow === "wardrobe"
+                  ? "The outfit"
+                  : "What changes?"}
+            </h2>
           </div>
         </div>
         <p className="replacement-help">
-          Shared across the series. Leave a reference empty to keep that aspect
-          from each original.
+          {workflow === "makeup"
+            ? "The portrait supplies identity. Empty makeup or hair slots preserve the original."
+            : workflow === "wardrobe"
+              ? "Use a main clothing reference and add more garments below. The original supplies the person and pose."
+              : "Shared across the series. Leave a reference empty to keep that aspect from each original."}
         </p>
         <div className="replacement-slots">
           {roles.map((role) => (
@@ -665,6 +866,129 @@ export function ReplacementStudio({
             </div>
           ))}
         </div>
+        <section className="replacement-extras" aria-label="Extra references">
+          <div className="image-section-label">
+            <span>
+              {workflow === "wardrobe"
+                ? "More clothing references"
+                : "Extra references"}
+            </span>
+            <small>
+              {replacementOrder.length + 1} / {boot.images.maxReferences} images
+              per original
+            </small>
+          </div>
+          <p className="replacement-help">
+            {workflow === "makeup"
+              ? "Describe the cosmetic or hair detail to use from each extra reference."
+              : "Give each reference a role, such as shoes, earrings or a fabric detail."}
+          </p>
+          <input
+            ref={extraInput}
+            hidden
+            type="file"
+            multiple
+            accept="image/jpeg,image/png,image/webp"
+            onChange={(e) => {
+              if (e.target.files) void attachExtras(e.target.files);
+            }}
+          />
+          {extras.map((item, index) => (
+            <div className="replacement-extra" key={item.asset.id}>
+              {!submitted && <img src={item.asset.url} alt={item.asset.name} />}
+              <label className="script-field">
+                <span>
+                  Image {replacementOrder.indexOf(item.asset.id) + 2} ·
+                  Reference role
+                </span>
+                <input
+                  value={item.label}
+                  disabled={locked}
+                  maxLength={160}
+                  placeholder="Describe what to use from this image"
+                  onChange={(e) => {
+                    edit();
+                    setExtras((items) =>
+                      items.map((extra, i) =>
+                        i === index
+                          ? { ...extra, label: e.target.value }
+                          : extra,
+                      ),
+                    );
+                  }}
+                />
+              </label>
+              {!submitted && (
+                <button
+                  className="icon-button"
+                  disabled={!!busy}
+                  aria-label={`Remove extra reference ${index + 1}`}
+                  onClick={() => {
+                    edit();
+                    setExtras((items) => items.filter((_, i) => i !== index));
+                  }}
+                >
+                  <Icon name="Close" size={16} />
+                </button>
+              )}
+            </div>
+          ))}
+          {!submitted && (
+            <Button
+              disabled={
+                !!busy ||
+                replacementOrder.length >= boot.images.maxReferences - 1
+              }
+              onClick={() => extraInput.current?.click()}
+            >
+              <Icon name="Plus" size={16} />
+              Add extra references
+            </Button>
+          )}
+          {extras.some((item) => !item.label.trim()) && (
+            <small className="image-notice">
+              Describe each extra reference before preparing or generating.
+            </small>
+          )}
+        </section>
+        <fieldset className="replacement-identity" disabled={locked}>
+          <legend>Fixed face details</legend>
+          <p className="replacement-help">
+            Shared across editing modes and saved in this browser for your
+            account.
+          </p>
+          <label className="script-field">
+            <span>Eye color</span>
+            <select
+              value={identity.eyeColor}
+              onChange={(e) => {
+                edit();
+                onIdentity({ ...identity, eyeColor: e.target.value });
+              }}
+            >
+              {["blue", "green", "brown", "hazel", "gray", "amber"].map(
+                (value) => (
+                  <option key={value} value={value}>
+                    {value[0].toUpperCase() + value.slice(1)}
+                  </option>
+                ),
+              )}
+            </select>
+          </label>
+          <label className="script-field">
+            <span>Other fixed features · English</span>
+            <textarea
+              rows={2}
+              maxLength={600}
+              value={identity.details}
+              placeholder="For example: freckles across the nose, a small mole under the left eye."
+              onChange={(e) => {
+                edit();
+                onIdentity({ ...identity, details: e.target.value });
+              }}
+            />
+          </label>
+        </fieldset>
         <label className="replacement-checkbox">
           <input
             type="checkbox"
@@ -731,10 +1055,29 @@ export function ReplacementStudio({
             </select>
           </label>
         </div>
+        {workflow === "replacement" && (
+          <label className="script-field replacement-parallelism">
+            <span>Prompts at the same time</span>
+            <select
+              disabled={locked}
+              value={parallelism}
+              onChange={(e) => setParallelism(Number(e.target.value))}
+            >
+              {[1, 2, 3, 4].map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                  {value === 3 ? " · Default" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {boot.images.storage === "temporary" && (
           <p className="image-notice">
             References are deleted after generation. Download each result within{" "}
-            {Math.ceil(boot.images.downloadTtlSeconds / 60)} min.
+            {Math.ceil(boot.images.downloadTtlSeconds / 60)} min. Regeneration
+            can reuse files from this open tab. After reloading, attach them
+            again.
           </p>
         )}
         {progress && (
@@ -745,7 +1088,7 @@ export function ReplacementStudio({
         <footer className="generate-footer">
           {submitted ? (
             <Button onClick={reset} disabled={!!busy}>
-              New series
+              {workflow === "replacement" ? "New series" : "New draft"}
             </Button>
           ) : (
             <>
@@ -761,12 +1104,25 @@ export function ReplacementStudio({
               </div>
               <Button
                 disabled={
-                  !!busy || !originals.length || !boot.images.assistanceEnabled
+                  !!busy ||
+                  !originals.length ||
+                  !validReferences ||
+                  !boot.images.assistanceEnabled
                 }
                 onClick={() => prepare(originals)}
               >
                 Prepare individual prompts
               </Button>
+              {originals.some((row) => row.error) && (
+                <Button
+                  disabled={
+                    !!busy || !validReferences || !boot.images.assistanceEnabled
+                  }
+                  onClick={() => prepare(originals.filter((row) => row.error))}
+                >
+                  Retry failed prompts
+                </Button>
+              )}
               {busy === "prepare" && (
                 <button
                   className="text-button"
@@ -774,7 +1130,7 @@ export function ReplacementStudio({
                     stop.current = true;
                   }}
                 >
-                  Stop after this photo
+                  Stop queued prompts
                 </button>
               )}
               <Button
@@ -784,6 +1140,7 @@ export function ReplacementStudio({
                   !!busy ||
                   !originals.length ||
                   prepared !== originals.length ||
+                  !validReferences ||
                   !boot.images.generationEnabled ||
                   insufficient
                 }

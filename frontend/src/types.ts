@@ -1,6 +1,12 @@
 export type Kind = "character" | "clothing" | "location" | "motion";
 export type StudioMode = "video" | "images";
-export type ReplacementRole = "model" | "clothing" | "makeup" | "location";
+export type ReplacementRole =
+  "model" | "clothing" | "makeup" | "hairstyle" | "location";
+export type EditWorkflow = "replacement" | "makeup" | "wardrobe";
+export interface IdentityLock {
+  eyeColor: string;
+  details: string;
+}
 export type Part = "freeform" | "motion";
 export interface Asset {
   id: string;
@@ -95,7 +101,8 @@ export interface ImageGeneration {
   error: string;
   url: string | null;
   downloadUrl: string | null;
-  mode: "single" | "replacement";
+  mode: "single" | EditWorkflow;
+  regeneratedFrom: string | null;
   batchId: string | null;
   originalId: string | null;
   originalName: string | null;

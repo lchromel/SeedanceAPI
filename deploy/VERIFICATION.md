@@ -1,5 +1,31 @@
 # Local verification — 2026-09-19
 
+## Editing modes, identity controls and individual regeneration — 2026-11-03
+
+- Django: 135 tests on SQLite (133 passed, two PostgreSQL locking tests skipped).
+  Eight new tests cover makeup/hair identity scope, wardrobe/body-sheet views,
+  caption-to-image mapping, role/owner/combined input limits, identity footer
+  replacement, individual/idempotent regeneration, rejection of active/review
+  jobs, and regeneration using fresh uploads after old temporary inputs were
+  deleted. The previous output remains available until its own retention deadline.
+- Frontend: seven tests passed, including three queue tests for real overlap,
+  concurrency limits, stopping queued work while preserving active work and
+  retrying failed items without discarding successful rows. TypeScript/Vite
+  build, Python lint, migration drift and whitespace checks passed.
+- Browser: checked all four mode entries, focused-mode inputs, shared iris color
+  across modes and its persistence after reload, the six-color list with Blue as
+  default, two extra uploads with independent captions and their exact labels.
+  Regenerated one existing mock result and observed a new Ready job/download with
+  the old Ready result still present. Desktop 1440 px and mobile 390 px checked;
+  mobile document width remained 390 px, no visible broken images and no captured
+  warnings/errors. Temporary viewport override was reset afterwards.
+- Screenshots: `/private/tmp/seedance-editing-desktop.jpg` and
+  `/private/tmp/seedance-editing-mobile.jpg`. File-picker automation was unusually
+  slow; no production image-generation request was made during browser checks.
+- Vision/DeepSeek responses in backend tests were mocked. Actual face/eye-color,
+  makeup, hair and clothing fidelity, live model latency/rate limits and Railway
+  deployment were not tested. No schema migration is required.
+
 ## Location staging and tattoo setting — 2026-11-03
 
 - Django: 127 tests on SQLite (125 passed, two PostgreSQL locking tests skipped).

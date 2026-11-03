@@ -13,11 +13,12 @@ from rest_framework.exceptions import ValidationError
 from . import image_retention, images, storage
 from .models import Asset, ImageGeneration, Wallet
 
-ROLES = ("model", "clothing", "makeup", "location")
+ROLES = ("model", "clothing", "makeup", "hairstyle", "location")
 ASPECTS = {
     "model": "the primary person's identity and overall appearance",
     "clothing": "the clothing and accessories",
     "makeup": "the makeup",
+    "hairstyle": "the hairstyle",
     "location": "the location and background",
 }
 SYSTEM = (Path(__file__).with_name("prompts") / "seedream_replacement.md").read_text()
@@ -25,12 +26,41 @@ TATTOO_INSTRUCTIONS = {
     False: "Remove all tattoos from visible skin, including tattoos on the original subject or replacement model; render natural, unmarked skin with realistic texture.",
     True: "Preserve visible tattoos from the new model reference when supplied, otherwise from Image 1, following their observed placement and appearance on visible skin; keep covered or unobserved areas unspecified.",
 }
+WORKFLOWS = {
+    "replacement": ("model", "clothing", "makeup", "hairstyle", "location"),
+    "makeup": ("makeup", "hairstyle"),
+    "wardrobe": ("clothing",),
+}
+IDENTITY_MARKER = "\n\nFixed identity details:\n"
+WORKFLOW_MARKER = "\n\nFocused edit scope:\n"
+WORKFLOW_INSTRUCTIONS = {
+    "makeup": "Edit only the makeup and selected hairstyle on the original portrait. Preserve the original person's facial identity, bone structure, feature proportions, age, expression, gaze, base skin tone, pose, clothing, background and framing, subject to the explicit identity and tattoo settings. Donor references supply cosmetics and hair rather than a different face.",
+    "wardrobe": "Dress the person from the original photograph or body sheet in the referenced garments. Preserve facial identity, body proportions, pose, camera, background and the arrangement of existing views, subject to the explicit identity and tattoo settings. Apply the same outfit consistently to every existing view, matching observed fabric, cut and colors with natural drape and fit.",
+}
+
+
+class IdentityDetails(serializers.Serializer):
+    eyeColor = serializers.ChoiceField(
+        choices=["", "brown", "blue", "green", "hazel", "gray", "amber"],
+        default="",
+        allow_blank=True,
+    )
+    details = serializers.CharField(max_length=600, allow_blank=True, default="")
+
+
+class ExtraReference(serializers.Serializer):
+    asset = serializers.UUIDField()
+    label = serializers.CharField(max_length=160)
+
+    def validate_asset(self, value):
+        return str(value)
 
 
 class ReplacementReferences(serializers.Serializer):
     model = serializers.UUIDField(allow_null=True, default=None)
     clothing = serializers.UUIDField(allow_null=True, default=None)
     makeup = serializers.UUIDField(allow_null=True, default=None)
+    hairstyle = serializers.UUIDField(allow_null=True, default=None)
     location = serializers.UUIDField(allow_null=True, default=None)
 
     def validate(self, data):
@@ -43,11 +73,32 @@ class ReplacementCommon(serializers.Serializer):
     ratio = serializers.ChoiceField(choices=["original", *images.RATIOS], default="original")
     resolution = serializers.ChoiceField(choices=list(images.RESOLUTIONS), default="2K")
     keepTattoos = serializers.BooleanField(default=False)
+    workflow = serializers.ChoiceField(choices=list(WORKFLOWS), default="replacement")
+    extras = ExtraReference(many=True, max_length=9, default=list)
+    identity = IdentityDetails(default=dict)
+
+    def validate(self, data):
+        allowed = WORKFLOWS[data["workflow"]]
+        if any(value for role, value in data["replacements"].items() if role not in allowed):
+            raise ValidationError("A reference role does not belong to the selected mode.")
+        if data["workflow"] == "makeup" and not any(data["replacements"].values()):
+            raise ValidationError("Add a makeup or hairstyle reference.")
+        if data["workflow"] == "wardrobe" and not (
+            data["replacements"].get("clothing") or data["extras"]
+        ):
+            raise ValidationError("Add at least one clothing reference.")
+        return data
 
 
-def reference_ids(original, replacements):
+def reference_ids(original, replacements, extras=()):
     return list(
-        dict.fromkeys([original, *filter(None, (replacements.get(role) for role in ROLES))])
+        dict.fromkeys(
+            [
+                original,
+                *filter(None, (replacements.get(role) for role in ROLES)),
+                *(item["asset"] for item in extras),
+            ]
+        )
     )
 
 
@@ -72,8 +123,11 @@ class ReplacementPrompt(ReplacementCommon):
     notes = serializers.CharField(max_length=2000, allow_blank=True, default="")
 
     def validate(self, data):
+        data = super().validate(data)
         data["original"] = str(data["original"])
-        validate_assets(self.context["user"], reference_ids(data["original"], data["replacements"]))
+        ids = reference_ids(data["original"], data["replacements"], data["extras"])
+        validate_reference_limit(ids)
+        validate_assets(self.context["user"], ids)
         return data
 
 
@@ -91,17 +145,28 @@ class ReplacementBatch(ReplacementCommon):
     originals = OriginalSelection(many=True, min_length=1, max_length=50)
 
     def validate(self, data):
+        data = super().validate(data)
         originals = [item["asset"] for item in data["originals"]]
+        if data["workflow"] != "replacement" and len(originals) != 1:
+            raise ValidationError("This mode edits one portrait or body sheet at a time.")
         if len(originals) != len(set(originals)):
             raise ValidationError("Each original must appear only once in a series.")
-        validate_assets(
-            self.context["user"], [*originals, *filter(None, data["replacements"].values())]
-        )
+        ids = []
+        for original in originals:
+            selected = reference_ids(original, data["replacements"], data["extras"])
+            validate_reference_limit(selected)
+            ids.extend(selected)
+        validate_assets(self.context["user"], ids)
         return data
 
 
-def plan_for(original, replacements):
-    ids = reference_ids(original, replacements)
+def validate_reference_limit(ids):
+    if len(ids) > 10:
+        raise ValidationError("Use up to 10 images per generation, including the original.")
+
+
+def plan_for(original, replacements, extras=()):
+    ids = reference_ids(original, replacements, extras)
     return {
         role: {
             "aspect": ASPECTS[role],
@@ -159,6 +224,16 @@ def reference_focus(plan, keep_tattoos):
                 "Keep covered or unobserved skin unspecified."
             )
         ).strip()
+    for role, task in {
+        "model": "Describe the identity source's visible facial structure, eye shape and iris color, nose, lips, eyebrows and distinctive permanent features. Mark uncertain colors under lighting as uncertain.",
+        "makeup": "Describe only the cosmetic reference's makeup placement, shades, texture and finish on eyes, brows, cheeks and lips. Separate cosmetic effects from face anatomy and iris color.",
+        "hairstyle": "Describe the hair reference's parting, silhouette, length, texture, styling and color. Keep its person's face separate from hair attributes.",
+        "clothing": "Describe the garments, accessories, cut, fabric, colors, closures and fit. For a body sheet, observe each existing view and the sheet layout.",
+    }.items():
+        source = plan[role]["source"]
+        if source != "original" or role == "model":
+            number = 1 if source == "original" else int(source.split()[1])
+            focus[number] = f"{focus.get(number, '')} {task}".strip()
     return focus
 
 
@@ -175,6 +250,28 @@ def apply_tattoo_policy(prompt, keep_tattoos):
             "The prompt is too long. Shorten it to leave room for the tattoo setting."
         )
     return result
+
+
+def apply_controls(prompt, data):
+    # A prepared prompt may already contain the previous settings footer.
+    for marker in (IDENTITY_MARKER, WORKFLOW_MARKER):
+        prompt = prompt.split(marker, 1)[0]
+    prompt = apply_tattoo_policy(prompt, data["keepTattoos"])
+    if data.get("workflow") in WORKFLOW_INSTRUCTIONS:
+        prompt += WORKFLOW_MARKER + WORKFLOW_INSTRUCTIONS[data["workflow"]]
+    identity = data.get("identity", {})
+    details = []
+    if identity.get("eyeColor"):
+        details.append(
+            f"Keep the person's iris color consistently {identity['eyeColor']} in every view; preserve this color under the scene lighting."
+        )
+    if identity.get("details"):
+        details.append(identity["details"])
+    if details:
+        prompt += IDENTITY_MARKER + " ".join(details)
+    if len(prompt) > 6000:
+        raise ValidationError("Shorten the prompt to leave room for the fixed identity details.")
+    return prompt
 
 
 def base_prompt(plan):
@@ -194,14 +291,15 @@ def base_prompt(plan):
 
 def enhance(user, data):
     original = Asset.objects.get(owner=user, pk=data["original"])
-    plan = plan_for(data["original"], data["replacements"])
+    ids = reference_ids(data["original"], data["replacements"], data["extras"])
+    plan = plan_for(data["original"], data["replacements"], data["extras"])
     ratio = original_ratio(original) if data["ratio"] == "original" else data["ratio"]
     result = images.enhance(
         user,
         {
             "prompt": data["prompt"] or base_prompt(plan),
             "instructions": data["instructions"],
-            "references": reference_ids(data["original"], data["replacements"]),
+            "references": ids,
             "ratio": ratio,
             "resolution": data["resolution"],
         },
@@ -210,10 +308,16 @@ def enhance(user, data):
             "replacementPlan": plan,
             "individualWishes": data["notes"],
             "tattooPolicy": TATTOO_INSTRUCTIONS[data["keepTattoos"]],
+            "workflow": data["workflow"],
+            "identityLock": data["identity"],
+            "extraReferences": [
+                {"source": f"Image {ids.index(item['asset']) + 1}", "role": item["label"]}
+                for item in data["extras"]
+            ],
         },
         reference_focus=reference_focus(plan, data["keepTattoos"]),
     )
-    prompt = apply_tattoo_policy(result["prompt"], data["keepTattoos"])
+    prompt = apply_controls(result["prompt"], data)
     return {**result, "prompt": prompt, "original": data["original"], "ratio": ratio}
 
 
@@ -222,7 +326,7 @@ def existing_batch(user, request_key):
         ImageGeneration.objects.filter(
             owner=user,
             snapshot__batch_id=str(request_key),
-            snapshot__mode="replacement",
+            snapshot__mode__in=list(WORKFLOWS),
         ).order_by("snapshot__original_index", "id")
     )
 
@@ -251,17 +355,19 @@ def generate(user, data):
             job = images.generate(
                 user,
                 {
-                    "prompt": apply_tattoo_policy(item["prompt"], data["keepTattoos"]),
+                    "prompt": apply_controls(item["prompt"], data),
                     "ratio": ratio,
                     "resolution": data["resolution"],
-                    "references": reference_ids(item["asset"], data["replacements"]),
+                    "references": reference_ids(
+                        item["asset"], data["replacements"], data["extras"]
+                    ),
                     "requestKey": uuid.uuid5(data["requestKey"], item["asset"]),
                 },
             )
             copies.extend(job.snapshot["reference_keys"])
             job.snapshot.update(
                 {
-                    "mode": "replacement",
+                    "mode": data["workflow"],
                     "batch_id": str(data["requestKey"]),
                     "original_id": item["asset"],
                     "original_name": original.name,
@@ -270,6 +376,8 @@ def generate(user, data):
                     "general_wishes": data["instructions"],
                     "individual_wishes": item["notes"],
                     "keep_tattoos": data["keepTattoos"],
+                    "identity_lock": data["identity"],
+                    "extra_references": data["extras"],
                 }
             )
             job.save(update_fields=["snapshot"])

@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import type { Asset, Bootstrap, ImageGeneration } from "../types";
+import type {
+  Asset,
+  Bootstrap,
+  EditWorkflow,
+  IdentityLock,
+  ImageGeneration,
+} from "../types";
 import { Button, Icon } from "./UI";
 import { ReplacementStudio } from "./ReplacementStudio";
 
@@ -28,7 +34,30 @@ export function ImageStudio({
   onUpload: (asset: Asset) => void;
 }) {
   const settings = boot.images;
-  const [mode, setMode] = useState<"single" | "replacement">("single");
+  const [mode, setMode] = useState<"single" | EditWorkflow>("single");
+  const [identity, setIdentity] = useState<IdentityLock>(() => {
+    try {
+      const saved = JSON.parse(
+        localStorage.getItem(`studio-identity-${boot.user.id}`) || "{}",
+      );
+      return {
+        eyeColor: ["blue", "green", "brown", "hazel", "gray", "amber"].includes(
+          saved.eyeColor,
+        )
+          ? saved.eyeColor
+          : "blue",
+        details: typeof saved.details === "string" ? saved.details : "",
+      };
+    } catch {
+      return { eyeColor: "blue", details: "" };
+    }
+  });
+  const referenceFiles = useRef(new Map<string, File>());
+  const retryRequests = useRef(
+    new Map<string, { key: string; references?: string[] }>(),
+  );
+  const retryLocks = useRef(new Set<string>());
+  const [retrying, setRetrying] = useState<string[]>([]);
   const [prompt, setPrompt] = useState("");
   const [instructions, setInstructions] = useState("");
   const [references, setReferences] = useState<string[]>([]);
@@ -48,7 +77,9 @@ export function ImageStudio({
   const revision = useRef(0);
   const requestKey = useRef<string | null>(null);
   const uploadLock = useRef(false);
-  const current = jobs.find((job) => job.id === selected) || jobs[0];
+  const singleJobs = jobs.filter((job) => job.mode === "single");
+  const current =
+    singleJobs.find((job) => job.id === selected) || singleJobs[0];
   const active = jobs.some(pending);
   const locked = uploading || submitting;
 
@@ -56,6 +87,75 @@ export function ImageStudio({
     revision.current += 1;
     requestKey.current = null;
     setNotice("");
+  }
+  function updateIdentity(value: IdentityLock) {
+    setIdentity(value);
+    try {
+      localStorage.setItem(
+        `studio-identity-${boot.user.id}`,
+        JSON.stringify(value),
+      );
+    } catch {
+      /* Editing still works without local storage. */
+    }
+  }
+  async function regenerate(job: ImageGeneration) {
+    if (retryLocks.current.has(job.id))
+      throw new Error("This image is already being regenerated.");
+    retryLocks.current.add(job.id);
+    setRetrying((ids) => [...ids, job.id]);
+    const request = retryRequests.current.get(job.id) || {
+      key: crypto.randomUUID(),
+    };
+    retryRequests.current.set(job.id, request);
+    try {
+      if (!request.references) {
+        const references: string[] = [];
+        for (const id of job.references) {
+          const file = referenceFiles.current.get(id);
+          if (
+            file &&
+            (job.temporary || !boot.assets.some((asset) => asset.id === id))
+          ) {
+            const form = new FormData();
+            form.append("kind", "image");
+            form.append("file", file);
+            const asset = await api<Asset>("assets", "POST", form);
+            referenceFiles.current.set(asset.id, file);
+            onUpload(asset);
+            references.push(asset.id);
+          } else references.push(id);
+        }
+        request.references = references;
+      }
+      const created = await api<ImageGeneration>(
+        `images/${job.id}/regenerate`,
+        "POST",
+        {
+          requestKey: request.key,
+          references: request.references,
+        },
+      );
+      setJobs((items) => [
+        created,
+        ...items.filter((item) => item.id !== created.id),
+      ]);
+      setSelected(created.id);
+      retryRequests.current.delete(job.id);
+      await onRefresh().catch(() => undefined);
+      return created;
+    } catch (e) {
+      if (/unavailable|expired|reattach/i.test((e as Error).message)) {
+        request.references = undefined;
+        throw new Error(
+          "Source references are unavailable. If this tab was reloaded, attach them again in a new draft.",
+        );
+      }
+      throw e;
+    } finally {
+      retryLocks.current.delete(job.id);
+      setRetrying((ids) => ids.filter((id) => id !== job.id));
+    }
   }
   useEffect(() => {
     let alive = true;
@@ -162,6 +262,7 @@ export function ImageStudio({
           form.append("file", file);
           form.append("kind", "image");
           const asset = await api<Asset>("assets", "POST", form);
+          referenceFiles.current.set(asset.id, file);
           onUpload(asset);
           setReferences((ids) => [...ids, asset.id]);
         } catch (e) {
@@ -239,24 +340,25 @@ export function ImageStudio({
           <span className="image-model">Seedream 5 Pro</span>
         </div>
         <nav className="image-mode-switch" aria-label="Image generation mode">
-          <button
-            aria-pressed={mode === "single"}
-            onClick={() => {
-              setMode("single");
-              setError("");
-            }}
-          >
-            Create image
-          </button>
-          <button
-            aria-pressed={mode === "replacement"}
-            onClick={() => {
-              setMode("replacement");
-              setError("");
-            }}
-          >
-            Photo series
-          </button>
+          {(
+            [
+              ["single", "Create image"],
+              ["replacement", "Photo series"],
+              ["makeup", "Makeup & hair"],
+              ["wardrobe", "Wardrobe"],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              aria-pressed={mode === value}
+              onClick={() => {
+                setMode(value);
+                setError("");
+              }}
+            >
+              {label}
+            </button>
+          ))}
         </nav>
         {boot.simulation && (
           <span className="simulation-badge">Local simulation</span>
@@ -328,15 +430,31 @@ export function ImageStudio({
                   Download
                 </a>
               )}
+              {["ready", "error", "expired"].includes(current.state) && (
+                <Button
+                  disabled={
+                    retrying.includes(current.id) || !settings.generationEnabled
+                  }
+                  onClick={() =>
+                    void regenerate(current).catch((e: Error) =>
+                      setError(e.message),
+                    )
+                  }
+                >
+                  {retrying.includes(current.id)
+                    ? "Starting…"
+                    : "Regenerate image"}
+                </Button>
+              )}
             </div>
           )}
           <div className="image-history-heading">
             <h2>Your images</h2>
-            <span>{jobs.length}</span>
+            <span>{singleJobs.length}</span>
           </div>
-          {jobs.length ? (
+          {singleJobs.length ? (
             <div className="image-history">
-              {jobs.map((job) => (
+              {singleJobs.map((job) => (
                 <button
                   key={job.id}
                   aria-pressed={current?.id === job.id}
@@ -577,21 +695,30 @@ export function ImageStudio({
           </footer>
         </section>
       </div>
-      <ReplacementStudio
-        hidden={mode !== "replacement"}
-        boot={boot}
-        jobs={jobs}
-        onUpload={onUpload}
-        onRefresh={onRefresh}
-        onJobs={(created) => {
-          const ids = new Set(created.map((job) => job.id));
-          setJobs((current) => [
-            ...created,
-            ...current.filter((job) => !ids.has(job.id)),
-          ]);
-          setSelected(created[0]?.id || null);
-        }}
-      />
+      {(["replacement", "makeup", "wardrobe"] as const).map((workflow) => (
+        <ReplacementStudio
+          key={workflow}
+          workflow={workflow}
+          hidden={mode !== workflow}
+          boot={boot}
+          jobs={jobs}
+          onUpload={onUpload}
+          onRefresh={onRefresh}
+          identity={identity}
+          onIdentity={updateIdentity}
+          onFile={(id, file) => referenceFiles.current.set(id, file)}
+          onRegenerate={regenerate}
+          retrying={retrying}
+          onJobs={(created) => {
+            const ids = new Set(created.map((job) => job.id));
+            setJobs((current) => [
+              ...created,
+              ...current.filter((job) => !ids.has(job.id)),
+            ]);
+            setSelected(created[0]?.id || null);
+          }}
+        />
+      ))}
     </main>
   );
 }

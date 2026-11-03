@@ -314,29 +314,58 @@ downloaded by the user. [Redis persistence](https://redis.io/docs/latest/managem
 
 ### Photo series — per-original replacement generation
 
-Images now has Create image and Photo series modes. Photo series separates:
+Images has Create image, Photo series, Makeup & hair and Wardrobe modes. Photo series separates:
 
 1. Up to 50 original photographs, each with its own editable full English prompt
    and optional individual wishes.
-2. Shared optional references for the new model, clothing, makeup and location,
+2. Shared optional references for the new model, clothing, makeup, hairstyle and location,
    plus general wishes for the series.
 
 An empty replacement slot preserves that aspect from each original. Each prompt
 sees only its own original as Image 1, followed by the selected replacements in
-model/clothing/makeup/location order. A reference reused for multiple roles is
+model/clothing/makeup/hairstyle/location order, then captioned extra references. A reference reused for multiple roles is
 sent once with both roles assigned. Other originals never become references for
 that photograph's generation. The initial aspect-ratio choice preserves each
 original's proportions; a fixed ratio can be selected for the whole series.
 
 Prepare individual prompts calls the vision model and DeepSeek separately for
-each photograph. It reuses the existing response/reference validation and one
-bounded text-repair attempt. Users can stop after the current photo, retry an
-individual failed enhancement or write full English prompts manually. This phase
+each photograph, with three bounded concurrent workers by default (selectable
+from one to four). It reuses the existing response/reference validation and one
+bounded text-repair attempt per photograph. Stop queued prompts lets in-flight
+calls finish without starting more. Users can retry one failed prompt or only
+failed rows, keeping successful drafts, or write full English prompts manually. This phase
 does not launch image generation; provider inference charges still apply. Shared
 references are currently analyzed with each original. Updating replacements,
 wishes, notes, ratio or resolution marks the relevant drafts for review/update
 before generation. The complete writer instructions are versioned in
 `backend/studio/prompts/seedream_replacement.md` and copied into the Docker image.
+
+All editing modes accept captioned extras (`extras: [{asset, label}]`), with a
+combined limit of ten unique images including that original. Captions are required
+and every reference is owner/availability checked. Exact labels are assigned
+after deduplication and included in DeepSeek's context. Updating captions or fixed
+identity values invalidates prepared drafts for review/update.
+
+Fixed face details are shared between editing modes and saved in localStorage
+under the current account ID. The UI selects Blue by default; the color list also
+contains Green, Brown, Hazel, Gray and Amber. The request includes
+`identity: {eyeColor, details}`. Details are entered in English for use in manual
+as well as enhanced prompts. The server includes these values in DeepSeek's
+context, appends an English identity footer to generation prompts and stores
+`identity_lock` in every job snapshot. Footer replacement is idempotent and honors
+the final prompt length limit. Existing API clients may omit identity constraints.
+
+The same replacement endpoints accept `workflow: "makeup"` or `"wardrobe"`
+(default `"replacement"`). Focused modes accept one original. Makeup requires a
+makeup and/or hairstyle reference; Wardrobe requires a clothing reference or
+captioned garment extras. Roles from other workflows are rejected. Makeup retains
+the original facial anatomy, expression, skin tone, clothing and background;
+cosmetics/hair donors do not replace identity. Wardrobe retains facial identity,
+body proportions, pose and the layout of an existing multi-view sheet, applying
+the outfit consistently across its views. Vision receives role-specific
+observation tasks. Both workflows append their edit scope even for manually
+written prompts and appear separately in history. Actual visual fidelity still
+depends on the generation model.
 
 With a location reference, vision receives separate observation tasks for the
 original's camera/crop/subject geometry and the donor environment's layout,
@@ -377,3 +406,20 @@ Endpoints: `POST /api/images/replacements/prompt` prepares one original's prompt
 `POST /api/images/replacements/generate` accepts an array of originals with their
 individual prompts and returns their separate generation jobs. History remains
 available through `GET /api/images`, scoped to the authenticated owner.
+
+`POST /api/images/{id}/regenerate` creates an explicit new attempt using the stored
+prompt, ratio and resolution, plus current provider/storage settings. Send a new
+`requestKey`; reuse it after an uncertain HTTP response to retrieve the same job.
+An optional ordered `references` list can replace deleted temporary uploads with
+fresh owned image assets; its length/order must match the original source map.
+Role/extra metadata is rebound to the new IDs. The original result is untouched
+and `regeneratedFrom` identifies it. Only Ready, Error and Expired jobs can be
+regenerated. Active and Review jobs cannot be resubmitted through this endpoint.
+
+The browser retains selected File handles in memory while the app is open. For
+temporary jobs it reuploads those source files before explicit regeneration,
+without extending retention of old server inputs or outputs. After a reload,
+deleted temporary sources must be attached again in a new draft. Persistent
+references that remain available can be reused after reload. Regeneration uses
+the same credit reservation path as a normal generation (currently disabled by
+the platform-wide setting), and it never runs other originals in the series.
