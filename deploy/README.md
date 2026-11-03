@@ -299,3 +299,50 @@ and `--appendonly no`). Do not change persistence of the application's existing
 broker without considering its other uses. Deleting a Redis key does not purge
 older snapshots/backups, and does not control copies held by BytePlus or already
 downloaded by the user. [Redis persistence](https://redis.io/docs/latest/management/persistence/).
+
+### Photo series — per-original replacement generation
+
+Images now has Create image and Photo series modes. Photo series separates:
+
+1. Up to 50 original photographs, each with its own editable full English prompt
+   and optional individual wishes.
+2. Shared optional references for the new model, clothing, makeup and location,
+   plus general wishes for the series.
+
+An empty replacement slot preserves that aspect from each original. Each prompt
+sees only its own original as Image 1, followed by the selected replacements in
+model/clothing/makeup/location order. A reference reused for multiple roles is
+sent once with both roles assigned. Other originals never become references for
+that photograph's generation. The initial aspect-ratio choice preserves each
+original's proportions; a fixed ratio can be selected for the whole series.
+
+Prepare individual prompts calls the vision model and DeepSeek separately for
+each photograph. It reuses the existing response/reference validation and one
+bounded text-repair attempt. Users can stop after the current photo, retry an
+individual failed enhancement or write full English prompts manually. This phase
+does not launch image generation; provider inference charges still apply. Shared
+references are currently analyzed with each original. Updating replacements,
+wishes, notes, ratio or resolution marks the relevant drafts for review/update
+before generation. The complete writer instructions are versioned in
+`backend/studio/prompts/seedream_replacement.md` and copied into the Docker image.
+
+Generate creates one independent ImageGeneration row per original, with its own
+prompt, provider call, status and download. A series request is idempotent per
+owner; its per-original request keys are stable. All rows and any credit
+reservations commit together before workers can see the series. A failed setup
+rolls back the whole series and removes partial temporary input copies. Once
+queued, provider failures are independent per image. Mode, series ID, original
+name/order and replacement roles are stored in each job's snapshot.
+
+The existing storage switch and TTL also apply. Every temporary job gets its own
+copies of shared references before the series commits, so cleanup after one
+generation cannot remove another queued job's inputs. Download completed
+temporary results before their individual deadlines. Original/shared draft
+uploads still expire after IMAGE_REFERENCE_TTL_SECONDS; allow enough time for
+prompt preparation when using large series. No additional migration is required
+beyond the existing Image studio and retention migrations.
+
+Endpoints: `POST /api/images/replacements/prompt` prepares one original's prompt;
+`POST /api/images/replacements/generate` accepts an array of originals with their
+individual prompts and returns their separate generation jobs. History remains
+available through `GET /api/images`, scoped to the authenticated owner.

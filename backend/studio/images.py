@@ -49,7 +49,7 @@ def reference_numbers(text):
 
 
 def dimensions(resolution, ratio):
-    width, height = RATIOS[ratio]
+    width, height = RATIOS[ratio] if ratio in RATIOS else map(int, ratio.split(":"))
     scale = (RESOLUTIONS[resolution] / (width * height)) ** 0.5
     return f"{round(width * scale / 8) * 8}x{round(height * scale / 8) * 8}"
 
@@ -63,6 +63,7 @@ def configuration():
         "resolutions": list(RESOLUTIONS),
         "storage": "s3" if settings.SAVE_IMAGES_TO_S3 else "temporary",
         "downloadTtlSeconds": settings.IMAGE_DOWNLOAD_TTL_SECONDS,
+        "maxOriginals": 50,
         "pricing": settings.CREDITS_PER_IMAGE if settings.CREDITS_ENABLED else 0,
         "assistanceEnabled": bool(settings.ARK_API_KEY),
         "generationEnabled": bool(
@@ -111,7 +112,7 @@ class ImageRequest(ImageInput):
     requestKey = serializers.UUIDField()
 
 
-def enhance(user, data):
+def enhance(user, data, *, system=None, extra_context=None):
     assets = {str(a.id): a for a in Asset.objects.filter(owner=user, id__in=data["references"])}
     observations = []
     if data["references"]:
@@ -178,6 +179,7 @@ def enhance(user, data):
         "references. Distinguish requested edits from what should be preserved using positive "
         "instructions. Respect the requested aspect ratio. Keep under 600 English words."
     )
+    writer_system = system or writer_system
     expected = set(range(1, len(data["references"]) + 1))
     labels = [f"Image {i}" for i in sorted(expected)]
     context = {
@@ -188,6 +190,8 @@ def enhance(user, data):
         "referenceLabels": labels,
         "referenceObservations": observations,
     }
+    if extra_context:
+        context.update(extra_context)
     # Repair only the writing, once. Reuse the verified visual observations;
     # never discard reference checks or repeat the vision request.
     for attempt in range(2):
@@ -227,6 +231,8 @@ def generate(user, data):
     if not configuration()["generationEnabled"]:
         raise ValidationError("Image generation is not configured. Contact your administrator.")
     assets = {str(a.id): a for a in Asset.objects.filter(owner=user, id__in=data["references"])}
+    if len(assets) != len(data["references"]):
+        raise ValidationError("An image reference is unavailable. Upload it again.")
     job = ImageGeneration.objects.create(
         owner=user,
         request_key=data["requestKey"],

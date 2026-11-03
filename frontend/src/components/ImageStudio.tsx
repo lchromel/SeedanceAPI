@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { Asset, Bootstrap, ImageGeneration } from "../types";
 import { Button, Icon } from "./UI";
+import { ReplacementStudio } from "./ReplacementStudio";
 
 const stateLabels: Record<ImageGeneration["state"], string> = {
   queued: "Queued",
@@ -27,6 +28,7 @@ export function ImageStudio({
   onUpload: (asset: Asset) => void;
 }) {
   const settings = boot.images;
+  const [mode, setMode] = useState<"single" | "replacement">("single");
   const [prompt, setPrompt] = useState("");
   const [instructions, setInstructions] = useState("");
   const [references, setReferences] = useState<string[]>([]);
@@ -231,11 +233,31 @@ export function ImageStudio({
     boot.creditsEnabled && price !== null && boot.wallet.available < price;
   return (
     <main className="workspace image-workspace" hidden={hidden}>
-      <header className="project-header">
+      <header className="project-header image-studio-header">
         <div>
           <h1>Image studio</h1>
           <span className="image-model">Seedream 5 Pro</span>
         </div>
+        <nav className="image-mode-switch" aria-label="Image generation mode">
+          <button
+            aria-pressed={mode === "single"}
+            onClick={() => {
+              setMode("single");
+              setError("");
+            }}
+          >
+            Create image
+          </button>
+          <button
+            aria-pressed={mode === "replacement"}
+            onClick={() => {
+              setMode("replacement");
+              setError("");
+            }}
+          >
+            Photo series
+          </button>
+        </nav>
         {boot.simulation && (
           <span className="simulation-badge">Local simulation</span>
         )}
@@ -246,7 +268,7 @@ export function ImageStudio({
           <button onClick={() => setError("")}>Dismiss</button>
         </div>
       )}
-      <div className="image-editor">
+      <div className="image-editor" hidden={mode !== "single"}>
         <section className="image-results" aria-label="Generated images">
           <div
             className="image-preview"
@@ -555,6 +577,21 @@ export function ImageStudio({
           </footer>
         </section>
       </div>
+      <ReplacementStudio
+        hidden={mode !== "replacement"}
+        boot={boot}
+        jobs={jobs}
+        onUpload={onUpload}
+        onRefresh={onRefresh}
+        onJobs={(created) => {
+          const ids = new Set(created.map((job) => job.id));
+          setJobs((current) => [
+            ...created,
+            ...current.filter((job) => !ids.has(job.id)),
+          ]);
+          setSelected(created[0]?.id || null);
+        }}
+      />
     </main>
   );
 }

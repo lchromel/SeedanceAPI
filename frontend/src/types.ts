@@ -1,5 +1,6 @@
 export type Kind = "character" | "clothing" | "location" | "motion";
 export type StudioMode = "video" | "images";
+export type ReplacementRole = "model" | "clothing" | "makeup" | "location";
 export type Part = "freeform" | "motion";
 export interface Asset {
   id: string;
@@ -53,6 +54,7 @@ export interface Bootstrap {
   images: {
     model: string;
     maxReferences: number;
+    maxOriginals: number;
     ratios: string[];
     resolutions: string[];
     pricing: number | null;
@@ -93,4 +95,9 @@ export interface ImageGeneration {
   error: string;
   url: string | null;
   downloadUrl: string | null;
+  mode: "single" | "replacement";
+  batchId: string | null;
+  originalId: string | null;
+  originalName: string | null;
+  originalIndex: number | null;
 }

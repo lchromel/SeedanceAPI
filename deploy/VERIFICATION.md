@@ -1,5 +1,25 @@
 # Local verification — 2026-09-19
 
+## Photo series verification — 2026-11-03
+
+- Django: 113 tests on SQLite (111 passed; two PostgreSQL locking tests skipped).
+  Eight replacement tests cover per-original prompts/jobs/reference ordering,
+  original proportions, individual vision inputs and wishes, absent-role defaults,
+  reused reference roles, owner isolation, series idempotency, all-or-nothing
+  credit reservation and temporary shared-reference cleanup/rollback.
+- TypeScript/Vite production build, four frontend tests, Python lint, migration
+  drift and whitespace checks passed.
+- Browser: uploaded two originals and a shared model reference, entered two
+  different prompts, queued two independent mock generations and observed two
+  Ready results with separate downloads. Output dimensions were 2368×1776 and
+  1776×2368, preserving the two originals' proportions. Desktop 1440 px and mobile
+  390 px layouts checked; mobile had no horizontal overflow or broken images.
+  No browser warnings/errors were observed in the checked flow.
+- Real model calls/visual replacement quality and Railway deployment were not
+  exercised. Browser generation used the explicit local mock provider; DeepSeek
+  UI was disabled without a key. Vision/DeepSeek request behavior was verified
+  with test responses in the backend suite.
+
 ## Temporary Image studio storage — 2026-11-03
 
 - Django: 105 tests on SQLite (103 passed, two PostgreSQL locking tests skipped).

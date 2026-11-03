@@ -3,7 +3,7 @@ from rest_framework.response import Response
 from rest_framework.fields import UUIDField
 from django.utils import timezone
 
-from . import enhancer, images, storage
+from . import enhancer, images, replacements, storage
 from .models import ImageGeneration
 
 
@@ -28,6 +28,11 @@ def image_data(job):
         "downloadUrl": storage.url(output_key, download=True),
         "expiresAt": job.expires_at,
         "temporary": job.snapshot.get("temporary_output", False),
+        "mode": job.snapshot.get("mode", "single"),
+        "batchId": job.snapshot.get("batch_id"),
+        "originalId": job.snapshot.get("original_id"),
+        "originalName": job.snapshot.get("original_name"),
+        "originalIndex": job.snapshot.get("original_index"),
     }
 
 
@@ -66,3 +71,26 @@ def enhance_prompt(request):
         return Response(images.enhance(request.user, serializer.validated_data))
     except enhancer.EnhancementError as exc:
         return Response({"detail": str(exc)}, status=502)
+
+
+@api_view(["POST"])
+def enhance_replacement(request):
+    serializer = replacements.ReplacementPrompt(data=request.data, context={"user": request.user})
+    serializer.is_valid(raise_exception=True)
+    try:
+        return Response(replacements.enhance(request.user, serializer.validated_data))
+    except enhancer.EnhancementError as exc:
+        return Response({"detail": str(exc)}, status=502)
+
+
+@api_view(["POST"])
+def replacement_batch(request):
+    if isinstance(request.data, dict) and request.data.get("requestKey"):
+        request_key = UUIDField().run_validation(request.data["requestKey"])
+        previous = replacements.existing_batch(request.user, request_key)
+        if previous:
+            return Response([image_data(job) for job in previous], status=201)
+    serializer = replacements.ReplacementBatch(data=request.data, context={"user": request.user})
+    serializer.is_valid(raise_exception=True)
+    jobs = replacements.generate(request.user, serializer.validated_data)
+    return Response([image_data(job) for job in jobs], status=201)

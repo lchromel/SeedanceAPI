@@ -9,6 +9,8 @@ urlpatterns = [
     path("api/bootstrap", views.bootstrap),
     path("api/images", image_views.generations),
     path("api/images/enhance", image_views.enhance_prompt),
+    path("api/images/replacements/prompt", image_views.enhance_replacement),
+    path("api/images/replacements/generate", image_views.replacement_batch),
     path("api/projects", views.projects),
     path("api/projects/<uuid:pk>", views.project_detail),
     path("api/projects/<uuid:pk>/generate", views.generate),
