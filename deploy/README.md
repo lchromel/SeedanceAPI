@@ -247,6 +247,18 @@ attempt with the original request and the same verified observations. Vision is
 not repeated; that repair adds one inference call only when needed. A failed
 repair preserves the user's draft.
 
+The image vision stage also normalizes explicit numeric/string image labels,
+reordered entries and JSON mappings/fences. Missing, duplicate, conflicting or
+invalid descriptions are not guessed or silently dropped. Only those sources
+are analyzed again, each in an isolated one-image request; the server assigns
+their original image numbers. Ambiguous aggregate numbering triggers isolated
+analysis of every source. Recovery uses at most four concurrent vision calls,
+one per missing source, within the enhancement's 100-second budget. Writing and
+its optional repair use the remaining time. This can add inference calls when
+an aggregate vision response is incomplete. Genuine analysis failures preserve
+the draft and identify the affected image. Logs contain recovery counts only,
+not images, descriptions or provider responses.
+
 API reference: [BytePlus image generation](https://docs.byteplus.com/en/docs/modelark/image-generation-api),
 [Seedream 5 Pro examples](https://docs.byteplus.com/en/docs/modelark/seedream-5-0-pro).
 

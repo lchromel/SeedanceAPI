@@ -230,11 +230,10 @@ class ImageTests(TestCase):
                 format="json",
             )
         self.assertEqual(response.status_code, 200)
-        self.assertTrue(
-            chat.call_args_list[0]
-            .args[2][1]["image_url"]["url"]
-            .startswith("data:image/jpeg;base64,")
-        )
+        vision_images = [
+            item for item in chat.call_args_list[0].args[2] if item["type"] == "image_url"
+        ]
+        self.assertTrue(vision_images[0]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
         context = json.loads(chat.call_args_list[1].args[2])
         self.assertEqual(context["referenceObservations"][0]["description"], "A bright red cup.")
         self.assertIn("Сохрани", context["revisionInstructions"])

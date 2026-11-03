@@ -1,5 +1,19 @@
 # Local verification — 2026-09-19
 
+## Image vision response recovery — 2026-11-03
+
+- Django: 122 tests on SQLite (120 passed, two PostgreSQL locking tests skipped).
+  Nine new vision tests cover string/reordered labels, mapping/fenced formats,
+  duplicate and zero-based IDs, malformed or partial aggregate responses, actual
+  source-image isolation during recovery, preserved ordering into DeepSeek and
+  failure handling that never launches image generation or changes credit state.
+- Python lint and whitespace checks passed. No schema migration is needed.
+- One diagnostic call with synthetic solid-color images and the local tokens.txt
+  key returned HTTP 404 InvalidEndpointOrModel.NotFound for the default vision
+  model. Live response-format verification was therefore unavailable for that
+  credential/model combination; this does not establish the deployed service's
+  model configuration. No user photographs were sent by this diagnostic.
+
 ## Photo series verification — 2026-11-03
 
 - Django: 113 tests on SQLite (111 passed; two PostgreSQL locking tests skipped).

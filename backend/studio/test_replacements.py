@@ -153,8 +153,9 @@ class ReplacementTests(TestCase):
             self.assertEqual(context["individualWishes"], "Сохрани выражение")
             self.assertEqual(context["revisionInstructions"], "Улучши свет")
             content = chat.call_args_list[0].args[2]
-            self.assertEqual(len(content), 3)
-            image = content[1]["image_url"]["url"]
+            vision_images = [item for item in content if item["type"] == "image_url"]
+            self.assertEqual(len(vision_images), 2)
+            image = vision_images[0]["image_url"]["url"]
             with Image.open(io.BytesIO(base64.b64decode(image.split(",", 1)[1]))) as source:
                 self.assertEqual(source.size, size)
         self.assertFalse(ImageGeneration.objects.exists())
