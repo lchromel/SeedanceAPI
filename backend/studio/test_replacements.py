@@ -82,7 +82,11 @@ class ReplacementTests(TestCase):
         jobs = [ImageGeneration.objects.get(pk=item["id"]) for item in response.data]
         self.assertNotEqual(jobs[0].request_key, jobs[1].request_key)
         for i, (job, original) in enumerate(zip(jobs, [portrait, landscape])):
-            self.assertEqual(job.snapshot["prompt"], data["originals"][i]["prompt"])
+            self.assertEqual(
+                job.snapshot["prompt"],
+                data["originals"][i]["prompt"] + "\n\n" + replacements.TATTOO_INSTRUCTIONS[False],
+            )
+            self.assertFalse(job.snapshot["keep_tattoos"])
             self.assertEqual(
                 job.snapshot["references"], [str(original.pk), str(model.pk), str(clothing.pk)]
             )
@@ -145,7 +149,9 @@ class ReplacementTests(TestCase):
                     format="json",
                 )
             self.assertEqual(response.status_code, 200, response.data)
-            self.assertEqual(response.data["prompt"], text)
+            self.assertEqual(
+                response.data["prompt"], text + "\n\n" + replacements.TATTOO_INSTRUCTIONS[False]
+            )
             context = json.loads(chat.call_args_list[1].args[2])
             self.assertEqual(context["replacementPlan"]["makeup"]["source"], "Image 2")
             for role in ("model", "clothing", "location"):
@@ -159,6 +165,173 @@ class ReplacementTests(TestCase):
             with Image.open(io.BytesIO(base64.b64decode(image.split(",", 1)[1]))) as source:
                 self.assertEqual(source.size, size)
         self.assertFalse(ImageGeneration.objects.exists())
+
+    def test_shared_location_is_observed_and_staged_against_each_own_original(self):
+        portrait, wide = self.upload("portrait"), self.upload("wide", (320, 180))
+        model, location = self.upload("model"), self.upload("courtyard")
+        environment = "An ochre courtyard with stone paving, blue doors and a shaded arcade."
+        for original, observation, staging in (
+            (
+                portrait,
+                "Eye-level tight portrait; face at right, shoulders cropped.",
+                "Show a softly focused ochre wall behind the shoulders, with a cropped blue doorway at left.",
+            ),
+            (
+                wide,
+                "Low camera full-body view; person standing at left, feet on ground.",
+                "Show stone paving under the feet, a blue doorway and the arcade receding behind the standing figure.",
+            ),
+        ):
+            prompt = f"Edit Image 1: {observation} Use the identity from Image 2. Rebuild the observed environment from Image 3: {staging}"
+            with patch.object(
+                enhancer,
+                "chat",
+                side_effect=[
+                    json.dumps(
+                        {
+                            "images": [
+                                {"image": 1, "description": observation},
+                                {"image": 2, "description": "A person in a white shirt."},
+                                {"image": 3, "description": environment},
+                            ]
+                        }
+                    ),
+                    prompt,
+                ],
+            ) as chat:
+                response = self.client.post(
+                    "/api/images/replacements/prompt",
+                    {
+                        "original": str(original.pk),
+                        "replacements": {"model": str(model.pk), "location": str(location.pk)},
+                    },
+                    format="json",
+                )
+            self.assertEqual(response.status_code, 200, response.data)
+            texts = [
+                item["text"] for item in chat.call_args_list[0].args[2] if item["type"] == "text"
+            ]
+            self.assertTrue(any("Image 1:" in text and "camera height" in text for text in texts))
+            self.assertTrue(
+                any(
+                    "Image 3:" in text and "Location reference" in text and "materials" in text
+                    for text in texts
+                )
+            )
+            context = json.loads(chat.call_args_list[1].args[2])
+            self.assertEqual(context["replacementPlan"]["location"]["source"], "Image 3")
+            self.assertEqual(context["referenceObservations"][0]["description"], observation)
+            self.assertEqual(context["referenceObservations"][2]["description"], environment)
+            self.assertIn(staging, response.data["prompt"])
+        self.assertFalse(ImageGeneration.objects.exists())
+
+    def test_location_analysis_recovery_keeps_its_environment_focus(self):
+        original, location = self.upload("original"), self.upload("location")
+        with patch.object(
+            enhancer,
+            "chat",
+            side_effect=[
+                '{"images":[{"image":1,"description":"Tight eye-level portrait."}]}',
+                "Ochre walls, blue doors and stone paving in a courtyard.",
+                "Edit Image 1, keeping its tight portrait crop. Use the courtyard in Image 2: an ochre wall and the edge of a blue door behind the shoulders.",
+            ],
+        ) as chat:
+            response = self.client.post(
+                "/api/images/replacements/prompt",
+                {
+                    "original": str(original.pk),
+                    "replacements": {"location": str(location.pk)},
+                },
+                format="json",
+            )
+        self.assertEqual(response.status_code, 200, response.data)
+        recovery = chat.call_args_list[1].args[2]
+        self.assertIn("This is Image 2", recovery[0]["text"])
+        self.assertIn("Location reference", recovery[0]["text"])
+        self.assertIn("unseen areas unspecified", recovery[0]["text"])
+        self.assertEqual(len([item for item in recovery if item["type"] == "image_url"]), 1)
+        context = json.loads(chat.call_args_list[2].args[2])
+        self.assertIn("blue doors", context["referenceObservations"][1]["description"])
+
+    def test_tattoo_switch_reaches_writer_and_generation_and_replaces_previous_suffix(self):
+        original = self.upload("original")
+        removal = replacements.TATTOO_INSTRUCTIONS[False]
+        preservation = replacements.TATTOO_INSTRUCTIONS[True]
+        for keep in (False, True):
+            previous = (
+                "Edit Image 1. Preserve the pose.\n\n" + replacements.TATTOO_INSTRUCTIONS[not keep]
+            )
+            with patch.object(
+                enhancer,
+                "chat",
+                side_effect=[
+                    '{"images":[{"image":1,"description":"Person with a floral forearm tattoo."}]}',
+                    previous,
+                ],
+            ) as chat:
+                response = self.client.post(
+                    "/api/images/replacements/prompt",
+                    {
+                        "original": str(original.pk),
+                        "prompt": previous,
+                        "keepTattoos": keep,
+                        "instructions": "Keep tattoos" if not keep else "Remove tattoos",
+                    },
+                    format="json",
+                )
+            self.assertEqual(response.status_code, 200, response.data)
+            expected = preservation if keep else removal
+            opposite = removal if keep else preservation
+            context = json.loads(chat.call_args_list[1].args[2])
+            self.assertEqual(context["tattooPolicy"], expected)
+            self.assertEqual(response.data["prompt"].count(expected), 1)
+            self.assertNotIn(opposite, response.data["prompt"])
+            data = self.data([original])
+            data["keepTattoos"] = keep
+            data["originals"][0]["prompt"] = response.data["prompt"]
+            result = self.generate(data)
+            job = ImageGeneration.objects.get(pk=result.data[0]["id"])
+            self.assertIs(job.snapshot["keep_tattoos"], keep)
+            self.assertEqual(job.snapshot["prompt"], response.data["prompt"])
+
+    def test_tattoo_suffix_cannot_push_a_provider_prompt_over_the_limit(self):
+        original = self.upload("original")
+        data = self.data([original])
+        data["originals"][0]["prompt"] = "x" * 6000
+        response = self.client.post("/api/images/replacements/generate", data, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(ImageGeneration.objects.exists())
+
+    def test_preserved_tattoos_are_observed_on_model_even_when_it_is_also_location(self):
+        original, donor = self.upload("original"), self.upload("model-in-courtyard")
+        with patch.object(
+            enhancer,
+            "chat",
+            side_effect=[
+                '{"images":[{"image":1,"description":"Tight portrait."},{"image":2,"description":"Model with a blue bird tattoo on the left forearm, in an ochre courtyard."}]}',
+                "Edit Image 1. Use the person from Image 2 and restage its ochre courtyard as a softly focused wall behind the shoulders.",
+            ],
+        ) as chat:
+            response = self.client.post(
+                "/api/images/replacements/prompt",
+                {
+                    "original": str(original.pk),
+                    "replacements": {"model": str(donor.pk), "location": str(donor.pk)},
+                    "keepTattoos": True,
+                },
+                format="json",
+            )
+        self.assertEqual(response.status_code, 200, response.data)
+        content = chat.call_args_list[0].args[2]
+        self.assertEqual(len([item for item in content if item["type"] == "image_url"]), 2)
+        donor_focus = next(
+            item["text"]
+            for item in content
+            if item["type"] == "text" and item["text"].startswith("Image 2:")
+        )
+        self.assertIn("Location reference", donor_focus)
+        self.assertIn("visible tattoos", donor_focus)
+        self.assertIn("anatomical placement", donor_focus)
 
     def test_omitted_roles_preserve_original_and_reused_reference_is_sent_once(self):
         original, donor = self.upload("original"), self.upload("donor")

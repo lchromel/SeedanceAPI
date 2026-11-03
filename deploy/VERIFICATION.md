@@ -1,5 +1,20 @@
 # Local verification — 2026-09-19
 
+## Location staging and tattoo setting — 2026-11-03
+
+- Django: 127 tests on SQLite (125 passed, two PostgreSQL locking tests skipped).
+  Five new regression tests cover original-specific camera/environment context
+  with a shared location, location focus during vision recovery, default removal
+  and explicit preservation through enhancement/generation, repeated suffix
+  replacement, final prompt limits and shared model/location reference roles.
+- TypeScript/Vite production build, four frontend tests, Python lint, migration
+  drift and whitespace checks passed.
+- Browser: verified the Keep tattoos checkbox is initially unchecked, checking it
+  shows the model/original preservation explanation, and unchecking restores the
+  removal explanation. Screenshot: `/private/tmp/seedance-tattoos-default.jpg`.
+- Model responses in these tests are mocked. No real visual output, paid model
+  inference or Railway deployment was tested for this revision.
+
 ## Image vision response recovery — 2026-11-03
 
 - Django: 122 tests on SQLite (120 passed, two PostgreSQL locking tests skipped).

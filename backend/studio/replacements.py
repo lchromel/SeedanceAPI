@@ -21,6 +21,10 @@ ASPECTS = {
     "location": "the location and background",
 }
 SYSTEM = (Path(__file__).with_name("prompts") / "seedream_replacement.md").read_text()
+TATTOO_INSTRUCTIONS = {
+    False: "Remove all tattoos from visible skin, including tattoos on the original subject or replacement model; render natural, unmarked skin with realistic texture.",
+    True: "Preserve visible tattoos from the new model reference when supplied, otherwise from Image 1, following their observed placement and appearance on visible skin; keep covered or unobserved areas unspecified.",
+}
 
 
 class ReplacementReferences(serializers.Serializer):
@@ -38,6 +42,7 @@ class ReplacementCommon(serializers.Serializer):
     instructions = serializers.CharField(max_length=2000, allow_blank=True, default="")
     ratio = serializers.ChoiceField(choices=["original", *images.RATIOS], default="original")
     resolution = serializers.ChoiceField(choices=list(images.RESOLUTIONS), default="2K")
+    keepTattoos = serializers.BooleanField(default=False)
 
 
 def reference_ids(original, replacements):
@@ -121,6 +126,57 @@ def original_ratio(asset):
         raise ValidationError("An original expired. Upload it again.") from None
 
 
+def reference_focus(plan, keep_tattoos):
+    """Observe the source camera and donor environment before DeepSeek stages the edit."""
+    location = plan["location"]["source"]
+    focus = {}
+    if location != "original":
+        focus[1] = (
+            "Original photograph: describe the shot size, crop, camera height and viewing direction, "
+            "subject position and scale, pose, visible support/contact surfaces, foreground/background "
+            "depth and light direction. Distinguish observable geometry from uncertain estimates."
+        )
+        number = int(location.split()[1])
+        focus[number] = (
+            focus.get(number, "")
+            + " "
+            + (
+                "Location reference: describe the visible environment itself: spatial layout, architecture, "
+                "surfaces, materials, colors, distinctive objects, depth layers, perspective and light sources. "
+                "These observed features will be restaged around the original photograph's subject and camera. "
+                "Keep unseen areas unspecified; distinguish scene facts from inferred geometry."
+            )
+        ).strip()
+    if keep_tattoos:
+        source = plan["model"]["source"]
+        number = 1 if source == "original" else int(source.split()[1])
+        focus[number] = (
+            focus.get(number, "")
+            + " "
+            + (
+                "Describe any visible tattoos on this person: observed design, color, size and anatomical "
+                "placement. Distinguish tattoos from makeup, clothing and natural skin features. "
+                "Keep covered or unobserved skin unspecified."
+            )
+        ).strip()
+    return focus
+
+
+def apply_tattoo_policy(prompt, keep_tattoos):
+    # Replace our own previous suffix when improving a draft or toggling the setting.
+    prompt = prompt.strip()
+    while any(prompt.endswith(text) for text in TATTOO_INSTRUCTIONS.values()):
+        for text in TATTOO_INSTRUCTIONS.values():
+            if prompt.endswith(text):
+                prompt = prompt[: -len(text)].rstrip()
+    result = f"{prompt}\n\n{TATTOO_INSTRUCTIONS[keep_tattoos]}"
+    if len(result) > 6000:
+        raise ValidationError(
+            "The prompt is too long. Shorten it to leave room for the tattoo setting."
+        )
+    return result
+
+
 def base_prompt(plan):
     parts = [
         "Edit Image 1, the original photograph, preserving its pose, expression, camera viewpoint and composition."
@@ -153,9 +209,12 @@ def enhance(user, data):
         extra_context={
             "replacementPlan": plan,
             "individualWishes": data["notes"],
+            "tattooPolicy": TATTOO_INSTRUCTIONS[data["keepTattoos"]],
         },
+        reference_focus=reference_focus(plan, data["keepTattoos"]),
     )
-    return {**result, "original": data["original"], "ratio": ratio}
+    prompt = apply_tattoo_policy(result["prompt"], data["keepTattoos"])
+    return {**result, "prompt": prompt, "original": data["original"], "ratio": ratio}
 
 
 def existing_batch(user, request_key):
@@ -192,7 +251,7 @@ def generate(user, data):
             job = images.generate(
                 user,
                 {
-                    "prompt": item["prompt"],
+                    "prompt": apply_tattoo_policy(item["prompt"], data["keepTattoos"]),
                     "ratio": ratio,
                     "resolution": data["resolution"],
                     "references": reference_ids(item["asset"], data["replacements"]),
@@ -210,6 +269,7 @@ def generate(user, data):
                     "replacement_roles": data["replacements"],
                     "general_wishes": data["instructions"],
                     "individual_wishes": item["notes"],
+                    "keep_tattoos": data["keepTattoos"],
                 }
             )
             job.save(update_fields=["snapshot"])

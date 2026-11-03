@@ -108,12 +108,14 @@ class ImageRequest(ImageInput):
     requestKey = serializers.UUIDField()
 
 
-def enhance(user, data, *, system=None, extra_context=None):
+def enhance(user, data, *, system=None, extra_context=None, reference_focus=None):
     deadline = time.monotonic() + 100
     assets = {str(a.id): a for a in Asset.objects.filter(owner=user, id__in=data["references"])}
     observations = []
     if data["references"]:
-        observations = image_vision.analyze([assets[pk] for pk in data["references"]], deadline)
+        observations = image_vision.analyze(
+            [assets[pk] for pk in data["references"]], deadline, reference_focus=reference_focus
+        )
     writer_system = (
         "Write a complete, ready-to-use English prompt for Seedream 5 Pro image generation. "
         "Return only the FULL final prompt, without Markdown or explanation. Preserve the "

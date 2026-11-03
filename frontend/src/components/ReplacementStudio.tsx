@@ -57,6 +57,7 @@ export function ReplacementStudio({
   const [originals, setOriginals] = useState<Original[]>([]);
   const [replacements, setReplacements] = useState(emptyRoles);
   const [wishes, setWishes] = useState("");
+  const [keepTattoos, setKeepTattoos] = useState(false);
   const [ratio, setRatio] = useState("original");
   const [resolution, setResolution] = useState("2K");
   const [busy, setBusy] = useState<"upload" | "prepare" | "submit" | null>(
@@ -89,7 +90,13 @@ export function ReplacementStudio({
   const replacementOrder = [
     ...new Set(roles.map((role) => replacements[role]?.id).filter(Boolean)),
   ];
-  const fingerprint = JSON.stringify([roleIds, wishes, ratio, resolution]);
+  const fingerprint = JSON.stringify([
+    roleIds,
+    wishes,
+    ratio,
+    resolution,
+    keepTattoos,
+  ]);
   const stamp = (row: Original) => JSON.stringify([fingerprint, row.notes]);
   const prepared = originals.filter(
     (row) => row.prompt.trim() && row.preparedFor === stamp(row),
@@ -218,6 +225,7 @@ export function ReplacementStudio({
               prompt: row.prompt,
               ratio,
               resolution,
+              keepTattoos,
             },
           );
           if (!alive.current || version.current !== currentVersion) break;
@@ -283,6 +291,7 @@ export function ReplacementStudio({
           instructions: wishes,
           ratio,
           resolution,
+          keepTattoos,
           requestKey: requestKey.current,
         },
       );
@@ -312,6 +321,7 @@ export function ReplacementStudio({
     setOriginals([]);
     setReplacements(emptyRoles());
     setWishes("");
+    setKeepTattoos(false);
     setSubmitted(false);
     setError("");
   }
@@ -655,6 +665,25 @@ export function ReplacementStudio({
             </div>
           ))}
         </div>
+        <label className="replacement-checkbox">
+          <input
+            type="checkbox"
+            checked={keepTattoos}
+            disabled={locked}
+            onChange={(e) => {
+              edit();
+              setKeepTattoos(e.target.checked);
+            }}
+          />
+          <span>
+            <strong>Keep tattoos</strong>
+            <small>
+              {keepTattoos
+                ? "Keep visible tattoos from the new model, or the original if no model is added."
+                : "Remove tattoos from visible skin in every photo."}
+            </small>
+          </span>
+        </label>
         <label className="script-field">
           <span>General wishes</span>
           <textarea

@@ -338,6 +338,25 @@ wishes, notes, ratio or resolution marks the relevant drafts for review/update
 before generation. The complete writer instructions are versioned in
 `backend/studio/prompts/seedream_replacement.md` and copied into the Docker image.
 
+With a location reference, vision receives separate observation tasks for the
+original's camera/crop/subject geometry and the donor environment's layout,
+architecture, materials, colors, depth and light. These tasks survive single-image
+analysis recovery. DeepSeek is instructed to describe the observed environment as
+it would appear around this original's subject and camera, including the portion
+visible in the crop and plausible support surfaces, rather than only naming the
+location reference. Unseen geometry remains unspecified.
+
+Keep tattoos is unchecked by default (`keepTattoos: false` on both replacement
+endpoints). The checked state preserves observed tattoos from the selected model,
+or from the original if no model was selected; vision is asked to observe their
+design and anatomical placement on that source. The unchecked state requests
+natural, unmarked skin. The setting overrides conflicting draft/wishes and marks
+prepared prompts for update when changed. The server appends its full English
+tattoo instruction to enhanced and manually supplied generation prompts, replacing
+its previous suffix without duplication and enforcing the final character limit.
+The choice is stored as `keep_tattoos` in each job snapshot; new series reset it
+to false. No schema migration is required.
+
 Generate creates one independent ImageGeneration row per original, with its own
 prompt, provider call, status and download. A series request is idempotent per
 owner; its per-original request keys are stable. All rows and any credit
