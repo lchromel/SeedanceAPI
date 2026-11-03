@@ -52,6 +52,8 @@ def regenerate(user, source, data):
         "individual_wishes",
         "keep_tattoos",
         "identity_lock",
+        "location_description_only",
+        "location_description",
     ):
         if field in source.snapshot:
             job.snapshot[field] = copy.deepcopy(source.snapshot[field])

@@ -1,11 +1,14 @@
 """One independent replacement prompt and durable generation job per original."""
 
 import math
+import hashlib
+import json
 import tempfile
 import uuid
 from pathlib import Path
 
 from django.db import transaction
+from django.core import signing
 from PIL import Image
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
@@ -76,6 +79,7 @@ class ReplacementCommon(serializers.Serializer):
     workflow = serializers.ChoiceField(choices=list(WORKFLOWS), default="replacement")
     extras = ExtraReference(many=True, max_length=9, default=list)
     identity = IdentityDetails(default=dict)
+    locationDescriptionOnly = serializers.BooleanField(default=False)
 
     def validate(self, data):
         allowed = WORKFLOWS[data["workflow"]]
@@ -87,6 +91,17 @@ class ReplacementCommon(serializers.Serializer):
             data["replacements"].get("clothing") or data["extras"]
         ):
             raise ValidationError("Add at least one clothing reference.")
+        if data["locationDescriptionOnly"]:
+            location = data["replacements"].get("location")
+            if data["workflow"] != "replacement" or not location:
+                raise ValidationError("Add a location reference to use it only for description.")
+            other_sources = [
+                value for role, value in data["replacements"].items() if role != "location"
+            ] + [item["asset"] for item in data["extras"]]
+            if location in other_sources:
+                raise ValidationError(
+                    "Use a separate location image that is not assigned another reference role."
+                )
         return data
 
 
@@ -100,6 +115,71 @@ def reference_ids(original, replacements, extras=()):
             ]
         )
     )
+
+
+def generation_ids(original, data):
+    ids = reference_ids(original, data["replacements"], data["extras"])
+    if data["locationDescriptionOnly"]:
+        location = data["replacements"]["location"]
+        if location == original:
+            raise ValidationError(
+                "The original and description-only location must be different images."
+            )
+        ids.remove(location)
+    return ids
+
+
+def preparation_fingerprint(original, data, notes):
+    context = {
+        key: data[key]
+        for key in (
+            "replacements",
+            "extras",
+            "instructions",
+            "ratio",
+            "resolution",
+            "keepTattoos",
+            "identity",
+        )
+    }
+    context.update(original=original, notes=notes)
+    return hashlib.sha256(json.dumps(context, sort_keys=True).encode()).hexdigest()
+
+
+def location_proof(original, data, notes, description):
+    return signing.dumps(
+        {
+            "context": preparation_fingerprint(original, data, notes),
+            "description": hashlib.sha256(description.encode()).hexdigest(),
+        },
+        salt="studio.location-description",
+    )
+
+
+def validate_location_preparation(original, data, item):
+    if not data["locationDescriptionOnly"]:
+        return
+    try:
+        proof = signing.loads(
+            item["locationPreparation"], salt="studio.location-description", max_age=86400
+        )
+        valid = (
+            proof["context"] == preparation_fingerprint(original, data, item["notes"])
+            and proof["description"]
+            == hashlib.sha256(item["locationDescription"].encode()).hexdigest()
+            and bool(item["locationDescription"].strip())
+        )
+    except (signing.BadSignature, KeyError, TypeError, ValueError):
+        valid = False
+    if not valid:
+        raise ValidationError(
+            "Prepare this photo's prompt again to describe the location with the current settings."
+        )
+    expected = set(range(1, len(generation_ids(original, data)) + 1))
+    if images.reference_numbers(item["prompt"]) != expected:
+        raise ValidationError(
+            "Update the prompt to use only the attached generation image labels; the location is text only."
+        )
 
 
 def validate_assets(user, ids):
@@ -127,6 +207,7 @@ class ReplacementPrompt(ReplacementCommon):
         data["original"] = str(data["original"])
         ids = reference_ids(data["original"], data["replacements"], data["extras"])
         validate_reference_limit(ids)
+        generation_ids(data["original"], data)
         validate_assets(self.context["user"], ids)
         return data
 
@@ -135,6 +216,8 @@ class OriginalSelection(serializers.Serializer):
     asset = serializers.UUIDField()
     prompt = serializers.CharField(max_length=6000)
     notes = serializers.CharField(max_length=2000, allow_blank=True, default="")
+    locationDescription = serializers.CharField(max_length=2400, allow_blank=True, default="")
+    locationPreparation = serializers.CharField(max_length=1000, allow_blank=True, default="")
 
     def validate_asset(self, value):
         return str(value)
@@ -156,6 +239,8 @@ class ReplacementBatch(ReplacementCommon):
             selected = reference_ids(original, data["replacements"], data["extras"])
             validate_reference_limit(selected)
             ids.extend(selected)
+        for item in data["originals"]:
+            validate_location_preparation(item["asset"], data, item)
         validate_assets(self.context["user"], ids)
         return data
 
@@ -165,12 +250,14 @@ def validate_reference_limit(ids):
         raise ValidationError("Use up to 10 images per generation, including the original.")
 
 
-def plan_for(original, replacements, extras=()):
-    ids = reference_ids(original, replacements, extras)
+def plan_for(original, replacements, extras=(), *, ids=None, description_only=False):
+    ids = ids if ids is not None else reference_ids(original, replacements, extras)
     return {
         role: {
             "aspect": ASPECTS[role],
-            "source": f"Image {ids.index(replacements[role]) + 1}"
+            "source": "text description"
+            if role == "location" and description_only
+            else f"Image {ids.index(replacements[role]) + 1}"
             if replacements.get(role)
             else "original",
         }
@@ -191,7 +278,7 @@ def original_ratio(asset):
         raise ValidationError("An original expired. Upload it again.") from None
 
 
-def reference_focus(plan, keep_tattoos):
+def reference_focus(plan, keep_tattoos, description_only=False):
     """Observe the source camera and donor environment before DeepSeek stages the edit."""
     location = plan["location"]["source"]
     focus = {}
@@ -212,6 +299,14 @@ def reference_focus(plan, keep_tattoos):
                 "Keep unseen areas unspecified; distinguish scene facts from inferred geometry."
             )
         ).strip()
+        if description_only:
+            focus[number] += (
+                " This image will NOT be sent to image generation. Give a detailed English description "
+                "in 250–300 words, under 2400 characters: spatial layout, dimensions only when observable, "
+                "architecture, surface textures and colors, distinct objects, depth, light direction and "
+                "quality, shadows and reflections. Consider the original photo's camera and crop when "
+                "prioritizing visible features. Mark uncertainty and keep hidden geometry unspecified."
+            )
     if keep_tattoos:
         source = plan["model"]["source"]
         number = 1 if source == "original" else int(source.split()[1])
@@ -292,7 +387,15 @@ def base_prompt(plan):
 def enhance(user, data):
     original = Asset.objects.get(owner=user, pk=data["original"])
     ids = reference_ids(data["original"], data["replacements"], data["extras"])
-    plan = plan_for(data["original"], data["replacements"], data["extras"])
+    generation_refs = generation_ids(data["original"], data)
+    analysis_plan = plan_for(data["original"], data["replacements"], data["extras"])
+    plan = plan_for(
+        data["original"],
+        data["replacements"],
+        data["extras"],
+        ids=generation_refs,
+        description_only=data["locationDescriptionOnly"],
+    )
     ratio = original_ratio(original) if data["ratio"] == "original" else data["ratio"]
     result = images.enhance(
         user,
@@ -310,14 +413,27 @@ def enhance(user, data):
             "tattooPolicy": TATTOO_INSTRUCTIONS[data["keepTattoos"]],
             "workflow": data["workflow"],
             "identityLock": data["identity"],
+            "locationDescriptionOnly": data["locationDescriptionOnly"],
             "extraReferences": [
-                {"source": f"Image {ids.index(item['asset']) + 1}", "role": item["label"]}
+                {
+                    "source": f"Image {generation_refs.index(item['asset']) + 1}",
+                    "role": item["label"],
+                }
                 for item in data["extras"]
             ],
         },
-        reference_focus=reference_focus(plan, data["keepTattoos"]),
+        reference_focus=reference_focus(
+            analysis_plan, data["keepTattoos"], data["locationDescriptionOnly"]
+        ),
+        description_only=[data["replacements"]["location"]]
+        if data["locationDescriptionOnly"]
+        else [],
     )
     prompt = apply_controls(result["prompt"], data)
+    if data["locationDescriptionOnly"]:
+        result["locationPreparation"] = location_proof(
+            data["original"], data, data["notes"], result["locationDescription"]
+        )
     return {**result, "prompt": prompt, "original": data["original"], "ratio": ratio}
 
 
@@ -358,9 +474,7 @@ def generate(user, data):
                     "prompt": apply_controls(item["prompt"], data),
                     "ratio": ratio,
                     "resolution": data["resolution"],
-                    "references": reference_ids(
-                        item["asset"], data["replacements"], data["extras"]
-                    ),
+                    "references": generation_ids(item["asset"], data),
                     "requestKey": uuid.uuid5(data["requestKey"], item["asset"]),
                 },
             )
@@ -378,6 +492,13 @@ def generate(user, data):
                     "keep_tattoos": data["keepTattoos"],
                     "identity_lock": data["identity"],
                     "extra_references": data["extras"],
+                    "location_description_only": data["locationDescriptionOnly"],
+                    "location_description": item["locationDescription"]
+                    if data["locationDescriptionOnly"]
+                    else "",
+                    "analysis_reference_ids": [data["replacements"]["location"]]
+                    if data["locationDescriptionOnly"]
+                    else [],
                 }
             )
             job.save(update_fields=["snapshot"])

@@ -70,6 +70,9 @@ type Original = {
   preparedFor: string | null;
   error: string;
   jobId?: string;
+  locationDescription?: string;
+  locationPreparation?: string;
+  descriptionFor?: string;
 };
 const statusLabels: Record<ImageGeneration["state"], string> = {
   queued: "Queued",
@@ -118,6 +121,7 @@ export function ReplacementStudio({
   const [extras, setExtras] = useState<{ asset: Asset; label: string }[]>([]);
   const [parallelism, setParallelism] = useState(3);
   const [keepTattoos, setKeepTattoos] = useState(false);
+  const [locationDescriptionOnly, setLocationDescriptionOnly] = useState(false);
   const [ratio, setRatio] = useState("original");
   const [resolution, setResolution] = useState("2K");
   const [busy, setBusy] = useState<"upload" | "prepare" | "submit" | null>(
@@ -154,6 +158,9 @@ export function ReplacementStudio({
       ...extras.map((item) => item.asset.id),
     ]),
   ];
+  const generationOrder = replacementOrder.filter(
+    (id) => !locationDescriptionOnly || id !== replacements.location?.id,
+  );
   const extraPayload = extras.map((item) => ({
     asset: item.asset.id,
     label: item.label,
@@ -166,13 +173,19 @@ export function ReplacementStudio({
     keepTattoos,
     extraPayload,
     identity,
+    locationDescriptionOnly,
   ]);
   const stamp = (row: Original) => JSON.stringify([fingerprint, row.notes]);
   const prepared = originals.filter(
-    (row) => row.prompt.trim() && row.preparedFor === stamp(row),
+    (row) =>
+      row.prompt.trim() &&
+      row.preparedFor === stamp(row) &&
+      (!locationDescriptionOnly ||
+        (!!row.locationPreparation && row.descriptionFor === stamp(row))),
   ).length;
   const locked = !!busy || submitted;
   const validReferences =
+    (!locationDescriptionOnly || !!replacements.location) &&
     extras.every((item) => item.label.trim()) &&
     (workflow !== "makeup" ||
       !!replacements.makeup ||
@@ -338,23 +351,24 @@ export function ReplacementStudio({
             ),
           );
           try {
-            const result = await api<{ prompt: string }>(
-              "images/replacements/prompt",
-              "POST",
-              {
-                original: row.asset.id,
-                replacements: roleIds,
-                instructions: wishes,
-                notes: row.notes,
-                prompt: row.prompt,
-                ratio,
-                resolution,
-                keepTattoos,
-                workflow,
-                extras: extraPayload,
-                identity,
-              },
-            );
+            const result = await api<{
+              prompt: string;
+              locationDescription?: string;
+              locationPreparation?: string;
+            }>("images/replacements/prompt", "POST", {
+              original: row.asset.id,
+              replacements: roleIds,
+              instructions: wishes,
+              notes: row.notes,
+              prompt: row.prompt,
+              ratio,
+              resolution,
+              keepTattoos,
+              locationDescriptionOnly,
+              workflow,
+              extras: extraPayload,
+              identity,
+            });
             if (!alive.current || version.current !== currentVersion) return;
             setOriginals((current) =>
               current.map((item) =>
@@ -363,6 +377,11 @@ export function ReplacementStudio({
                       ...item,
                       prompt: result.prompt,
                       preparedFor: stamp(row),
+                      locationDescription: result.locationDescription,
+                      locationPreparation: result.locationPreparation,
+                      descriptionFor: result.locationPreparation
+                        ? stamp(row)
+                        : undefined,
                       error: "",
                     }
                   : item,
@@ -429,12 +448,15 @@ export function ReplacementStudio({
             asset: row.asset.id,
             prompt: row.prompt,
             notes: row.notes,
+            locationDescription: row.locationDescription || "",
+            locationPreparation: row.locationPreparation || "",
           })),
           replacements: roleIds,
           instructions: wishes,
           ratio,
           resolution,
           keepTattoos,
+          locationDescriptionOnly,
           workflow,
           extras: extraPayload,
           identity,
@@ -469,6 +491,7 @@ export function ReplacementStudio({
     setExtras([]);
     setWishes("");
     setKeepTattoos(false);
+    setLocationDescriptionOnly(false);
     setSubmitted(false);
     setError("");
   }
@@ -553,7 +576,10 @@ export function ReplacementStudio({
         <div className="replacement-list">
           {originals.map((row, index) => {
             const job = jobs.find((item) => item.id === row.jobId);
-            const ready = row.prompt.trim() && row.preparedFor === stamp(row);
+            const ready =
+              row.prompt.trim() &&
+              row.preparedFor === stamp(row) &&
+              (!locationDescriptionOnly || row.descriptionFor === stamp(row));
             const sourceCleared =
               submitted && boot.images.storage === "temporary";
             return (
@@ -633,7 +659,11 @@ export function ReplacementStudio({
                                 ? {
                                     ...item,
                                     prompt: e.target.value,
-                                    preparedFor: stamp(item),
+                                    preparedFor:
+                                      !locationDescriptionOnly ||
+                                      item.descriptionFor === stamp(item)
+                                        ? stamp(item)
+                                        : null,
                                     error: "",
                                   }
                                 : item,
@@ -642,6 +672,17 @@ export function ReplacementStudio({
                         }}
                       />
                     </label>
+                    {locationDescriptionOnly && row.locationDescription && (
+                      <details className="image-prompt-details">
+                        <summary>Observed location details</summary>
+                        <p>{row.locationDescription}</p>
+                        <small>
+                          The individual prompt adapts these observations to
+                          this photo. The location image is excluded from
+                          generation.
+                        </small>
+                      </details>
+                    )}
                     {!submitted && (
                       <details className="image-refinement">
                         <summary>
@@ -836,7 +877,9 @@ export function ReplacementStudio({
                 <strong>{labels[role]}</strong>
                 {replacements[role] && !submitted && (
                   <small>
-                    Image {replacementOrder.indexOf(replacements[role]!.id) + 2}
+                    {role === "location" && locationDescriptionOnly
+                      ? "Description only"
+                      : `Image ${generationOrder.indexOf(replacements[role]!.id) + 2}`}
                   </small>
                 )}
                 <small>
@@ -854,6 +897,7 @@ export function ReplacementStudio({
                   aria-label={`Remove ${labels[role].toLowerCase()} reference`}
                   onClick={() => {
                     edit();
+                    if (role === "location") setLocationDescriptionOnly(false);
                     setReplacements((current) => ({
                       ...current,
                       [role]: null,
@@ -866,6 +910,27 @@ export function ReplacementStudio({
             </div>
           ))}
         </div>
+        {workflow === "replacement" && (
+          <label className="replacement-checkbox">
+            <input
+              type="checkbox"
+              checked={locationDescriptionOnly}
+              disabled={locked || !replacements.location}
+              onChange={(e) => {
+                edit();
+                setLocationDescriptionOnly(e.target.checked);
+              }}
+            />
+            <span>
+              <strong>Use location for description only</strong>
+              <small>
+                {replacements.location
+                  ? "Describe the location in detail for each photo's composition, then generate using the text without the location image. Prepare prompts after changing this."
+                  : "Add a location reference first. Its description can guide the scene without sending the image to generation."}
+              </small>
+            </span>
+          </label>
+        )}
         <section className="replacement-extras" aria-label="Extra references">
           <div className="image-section-label">
             <span>
@@ -874,8 +939,10 @@ export function ReplacementStudio({
                 : "Extra references"}
             </span>
             <small>
-              {replacementOrder.length + 1} / {boot.images.maxReferences} images
-              per original
+              {replacementOrder.length + 1} / {boot.images.maxReferences}{" "}
+              {locationDescriptionOnly
+                ? "images analyzed"
+                : "images per original"}
             </small>
           </div>
           <p className="replacement-help">
@@ -898,8 +965,8 @@ export function ReplacementStudio({
               {!submitted && <img src={item.asset.url} alt={item.asset.name} />}
               <label className="script-field">
                 <span>
-                  Image {replacementOrder.indexOf(item.asset.id) + 2} ·
-                  Reference role
+                  Image {generationOrder.indexOf(item.asset.id) + 2} · Reference
+                  role
                 </span>
                 <input
                   value={item.label}
@@ -1152,8 +1219,9 @@ export function ReplacementStudio({
               </Button>
               {!boot.images.assistanceEnabled && (
                 <small>
-                  DeepSeek is not configured. You can write individual English
-                  prompts manually.
+                  {locationDescriptionOnly
+                    ? "DeepSeek is not configured. Location descriptions require prompt preparation before generating."
+                    : "DeepSeek is not configured. You can write individual English prompts manually."}
                 </small>
               )}
               {!boot.images.generationEnabled && (

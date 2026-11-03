@@ -46,7 +46,14 @@ def prepare_references(job_id, assets):
 
 def _release_references(job):
     assets = list(
-        Asset.objects.filter(owner_id=job.owner_id, kind="image", id__in=job.snapshot["references"])
+        Asset.objects.filter(
+            owner_id=job.owner_id,
+            kind="image",
+            id__in=[
+                *job.snapshot["references"],
+                *job.snapshot.get("analysis_reference_ids", []),
+            ],
+        )
     )
     temporary = [asset for asset in assets if storage.is_temporary(asset.key)]
     keys = list(job.snapshot.get("reference_keys", []))

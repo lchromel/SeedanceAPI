@@ -275,3 +275,194 @@ class EditingModesTests(TestCase):
                 f"/api/images/{source.pk}/regenerate", request, format="json"
             )
             self.assertEqual(repeated.data["id"], str(retry.pk))
+
+    def location_batch(self):
+        original, model, location, extra = [
+            self.upload(name) for name in ("original", "model", "courtyard", "detail")
+        ]
+        data = self.data([original], {"model": model, "location": location})
+        data.update(
+            locationDescriptionOnly=True,
+            extras=[{"asset": str(extra.pk), "label": "Necklace only"}],
+        )
+        description = (
+            "An ochre courtyard with a blue door in a recessed opening, rough lime plaster walls, "
+            "pale stone paving and a shaded arcade receding to the right. Soft daylight enters "
+            "from the left, with low contrast shadows under the arcade. The far wall has small "
+            "areas of worn plaster, while the paving joints form converging depth lines."
+        )
+        with patch.object(
+            enhancer,
+            "chat",
+            side_effect=[
+                json.dumps(
+                    {
+                        "images": [
+                            {
+                                "image": 1,
+                                "description": "Tight eye-level portrait with shoulders cropped.",
+                            },
+                            {"image": 2, "description": "Identity source with brown eyes."},
+                            {"image": 4, "description": "A silver necklace."},
+                        ]
+                    }
+                ),
+                description,
+                "Edit Image 1 using the identity from Image 2 and the necklace from Image 3. Behind the cropped shoulders place a softly focused ochre plaster wall and the edge of a recessed blue door, lit by soft daylight from the left.",
+            ],
+        ) as chat:
+            response = self.client.post(
+                "/api/images/replacements/prompt",
+                {
+                    **{
+                        key: value
+                        for key, value in data.items()
+                        if key not in ("originals", "requestKey")
+                    },
+                    "original": str(original.pk),
+                    "notes": data["originals"][0]["notes"],
+                },
+                format="json",
+            )
+        self.assertEqual(response.status_code, 200, response.data)
+        data["originals"][0].update(
+            {
+                key: response.data[key]
+                for key in ("prompt", "locationDescription", "locationPreparation")
+            }
+        )
+        return (original, model, location, extra), data, chat, description
+
+    def test_description_only_location_is_observed_but_never_sent_to_seedream(self):
+        from unittest.mock import Mock
+
+        sources, data, chat, description = self.location_batch()
+        original, model, location, extra = sources
+        self.assertEqual(
+            len([item for item in chat.call_args_list[0].args[2] if item["type"] == "image_url"]), 4
+        )
+        recovery = chat.call_args_list[1].args[2]
+        self.assertIn("This is Image 3", recovery[0]["text"])
+        self.assertIn("250–300 words", recovery[0]["text"])
+        context = json.loads(chat.call_args_list[2].args[2])
+        self.assertEqual(context["referenceLabels"], ["Image 1", "Image 2", "Image 3"])
+        self.assertEqual(context["replacementPlan"]["location"]["source"], "text description")
+        self.assertEqual(
+            context["extraReferences"], [{"source": "Image 3", "role": "Necklace only"}]
+        )
+        self.assertEqual(context["locationDescription"], description)
+        self.assertNotIn(
+            description, [item["description"] for item in context["referenceObservations"]]
+        )
+        self.assertEqual(context["referenceObservations"][2]["description"], "A silver necklace.")
+        result = self.generate(data)
+        job = ImageGeneration.objects.get(pk=result.data[0]["id"])
+        self.assertEqual(
+            job.snapshot["references"], [str(original.pk), str(model.pk), str(extra.pk)]
+        )
+        self.assertNotIn(location.key, job.snapshot["reference_keys"])
+        self.assertEqual(job.snapshot["location_description"], description)
+        response = Mock(status_code=200)
+        response.json.return_value = {"data": [{"url": "https://provider.example/result.jpg"}]}
+        with (
+            patch.object(image_tasks.requests, "post", return_value=response) as post,
+            patch.object(
+                storage,
+                "url",
+                side_effect=lambda key, **kw: "https://private.example/" + key,
+            ),
+        ):
+            image_tasks.submit(job)
+        payload = post.call_args.kwargs["json"]
+        self.assertEqual(
+            payload["image"],
+            ["https://private.example/" + asset.key for asset in (original, model, extra)],
+        )
+        self.assertIn("ochre plaster wall", payload["prompt"])
+        self.assertNotIn("Image 4", payload["prompt"])
+
+    def test_description_only_requires_current_individual_preparation(self):
+        import copy
+
+        sources, data, _, _ = self.location_batch()
+        mutations = [
+            lambda item: item["originals"][0].update(locationPreparation=""),
+            lambda item: item["originals"][0].update(locationDescription="Invented setting"),
+            lambda item: item.update(instructions="Move to a different viewpoint"),
+            lambda item: item["originals"][0].update(notes="New crop"),
+            lambda item: item["originals"][0].update(asset=str(sources[1].pk)),
+            lambda item: item["originals"][0].update(
+                prompt="Edit Image 1 using Image 2, Image 3 and the old location Image 4."
+            ),
+        ]
+        with patch.object(image_tasks, "submit") as submit:
+            for mutate in mutations:
+                altered = copy.deepcopy(data)
+                mutate(altered)
+                response = self.client.post(
+                    "/api/images/replacements/generate", altered, format="json"
+                )
+                self.assertEqual(response.status_code, 400, response.data)
+        submit.assert_not_called()
+        self.assertFalse(ImageGeneration.objects.exists())
+
+    def test_description_only_rejects_a_location_reused_in_another_role(self):
+        original, donor = self.upload("original"), self.upload("donor")
+        for roles in (
+            {"location": str(original.pk)},
+            {"location": str(donor.pk), "model": str(donor.pk)},
+            {},
+        ):
+            with patch.object(enhancer, "chat") as chat:
+                response = self.client.post(
+                    "/api/images/replacements/prompt",
+                    {
+                        "original": str(original.pk),
+                        "replacements": roles,
+                        "locationDescriptionOnly": True,
+                    },
+                    format="json",
+                )
+            self.assertEqual(response.status_code, 400)
+            chat.assert_not_called()
+
+    def test_unchecked_location_continues_to_be_attached_as_an_image(self):
+        original, location = self.upload("original"), self.upload("location")
+        response = self.generate(self.data([original], {"location": location}))
+        job = ImageGeneration.objects.get(pk=response.data[0]["id"])
+        self.assertFalse(job.snapshot["location_description_only"])
+        self.assertEqual(job.snapshot["references"], [str(original.pk), str(location.pk)])
+
+    @override_settings(
+        SAVE_IMAGES_TO_S3=False, IMAGE_TEMP_REDIS_URL="redis://test-only", S3_BUCKET="unused"
+    )
+    def test_description_only_temporary_location_is_cleaned_up_and_not_needed_for_regeneration(
+        self,
+    ):
+        cache = ExpiringRedis()
+        with patch.object(storage, "temporary_client", return_value=cache):
+            sources, data, _, description = self.location_batch()
+            response = self.generate(data)
+            job = ImageGeneration.objects.get(pk=response.data[0]["id"])
+            with self.captureOnCommitCallbacks(execute=True):
+                image_tasks.process_image(job.pk)
+            self.assertFalse(Asset.objects.exists())
+            with self.assertRaises(FileNotFoundError):
+                storage.temporary_bytes(sources[2].key)
+            fresh = [
+                self.upload(name) for name in ("fresh-original", "fresh-model", "fresh-detail")
+            ]
+            request = {
+                "requestKey": str(uuid.uuid4()),
+                "references": [str(asset.pk) for asset in fresh],
+            }
+            with patch.object(enhancer, "chat") as chat:
+                repeated = self.client.post(
+                    f"/api/images/{job.pk}/regenerate", request, format="json"
+                )
+            self.assertEqual(repeated.status_code, 201, repeated.data)
+            retry = ImageGeneration.objects.get(pk=repeated.data["id"])
+            self.assertTrue(retry.snapshot["location_description_only"])
+            self.assertEqual(retry.snapshot["location_description"], description)
+            self.assertEqual(len(retry.snapshot["reference_keys"]), 3)
+            chat.assert_not_called()

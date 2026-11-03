@@ -108,14 +108,34 @@ class ImageRequest(ImageInput):
     requestKey = serializers.UUIDField()
 
 
-def enhance(user, data, *, system=None, extra_context=None, reference_focus=None):
+def enhance(
+    user, data, *, system=None, extra_context=None, reference_focus=None, description_only=()
+):
     deadline = time.monotonic() + 100
     assets = {str(a.id): a for a in Asset.objects.filter(owner=user, id__in=data["references"])}
     observations = []
     if data["references"]:
         observations = image_vision.analyze(
-            [assets[pk] for pk in data["references"]], deadline, reference_focus=reference_focus
+            [assets[pk] for pk in data["references"]],
+            deadline,
+            reference_focus=reference_focus,
+            detailed_references=[
+                i for i, pk in enumerate(data["references"], 1) if pk in description_only
+            ],
         )
+    generation_refs = [pk for pk in data["references"] if pk not in description_only]
+    described = []
+    generation_observations = []
+    for observation, pk in zip(observations, data["references"]):
+        if pk in description_only:
+            described.append(observation["description"])
+        else:
+            generation_observations.append(
+                {
+                    "image": generation_refs.index(pk) + 1,
+                    "description": observation["description"],
+                }
+            )
     writer_system = (
         "Write a complete, ready-to-use English prompt for Seedream 5 Pro image generation. "
         "Return only the FULL final prompt, without Markdown or explanation. Preserve the "
@@ -130,7 +150,7 @@ def enhance(user, data, *, system=None, extra_context=None, reference_focus=None
         "instructions. Respect the requested aspect ratio. Keep under 600 English words."
     )
     writer_system = system or writer_system
-    expected = set(range(1, len(data["references"]) + 1))
+    expected = set(range(1, len(generation_refs) + 1))
     labels = [f"Image {i}" for i in sorted(expected)]
     context = {
         "draft": data["prompt"],
@@ -138,10 +158,12 @@ def enhance(user, data, *, system=None, extra_context=None, reference_focus=None
         "ratio": data["ratio"],
         "resolution": data["resolution"],
         "referenceLabels": labels,
-        "referenceObservations": observations,
+        "referenceObservations": generation_observations,
     }
     if extra_context:
         context.update(extra_context)
+    if description_only:
+        context["locationDescription"] = "\n\n".join(described)
     # Repair only the writing, once. Reuse the verified visual observations;
     # never discard reference checks or repeat the vision request.
     for attempt in range(2):
@@ -156,7 +178,10 @@ def enhance(user, data, *, system=None, extra_context=None, reference_focus=None
             raise enhancer.EnhancementError("AI returned a prompt that is too long. Try again.")
         mentioned = reference_numbers(text)
         if mentioned == expected:
-            return {"prompt": text}
+            result = {"prompt": text}
+            if description_only:
+                result["locationDescription"] = context["locationDescription"]
+            return result
         if attempt == 0:
             context["referenceRepair"] = {
                 "task": "Return the full corrected English prompt, using every required label with its intended visual role.",

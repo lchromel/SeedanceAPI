@@ -1,5 +1,22 @@
 # Local verification — 2026-09-19
 
+## Description-only location — 2026-11-03
+
+- Django: 140 tests on SQLite (138 passed, two PostgreSQL locking tests skipped).
+  Five new tests cover detailed location observation/recovery, generation-label
+  remapping after exclusion, exact provider payload exclusion, signed per-original
+  preparation and stale/tampered/missing data rejection, conflicting source roles,
+  default image behavior, temporary location cleanup and explicit regeneration
+  without uploading or observing the location again.
+- Seven frontend tests, TypeScript/Vite build, Python lint, migration drift and
+  whitespace checks passed.
+- Browser: verified the checkbox is rendered in Photo series, initially unchecked
+  and disabled until a location is supplied, with the upload-first explanation.
+  Screenshot: `/private/tmp/seedance-location-description-only.jpg`.
+- Vision/DeepSeek and provider HTTP responses were mocked in the tests. Live
+  scene fidelity and production deployment were not tested. No paid model call
+  or user photograph was used for this verification.
+
 ## Editing modes, identity controls and individual regeneration — 2026-11-03
 
 - Django: 135 tests on SQLite (133 passed, two PostgreSQL locking tests skipped).

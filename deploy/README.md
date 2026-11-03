@@ -375,6 +375,33 @@ it would appear around this original's subject and camera, including the portion
 visible in the crop and plausible support surfaces, rather than only naming the
 location reference. Unseen geometry remains unspecified.
 
+Use location for description only is unchecked by default. Enable it in Photo
+series after uploading a location (`locationDescriptionOnly: true`). Vision
+examines the location with an image edge up to 1280 px and requests a detailed
+250–300 word observation within 2400 characters. DeepSeek then writes the scene
+in self-contained English prose adapted to that original's camera, crop, pose and
+subject placement. The location image is removed from generation references and
+provider input keys; remaining image labels, observations, source roles and extra
+captions are renumbered to match the actual generation inputs. The combined
+analysis limit remains ten images, including original and location. A location
+assigned to another role or also used as the original is rejected in this mode.
+
+Prompt preparation returns `locationDescription` and `locationPreparation`, which
+the client includes for each original in the generation request. The latter is a
+server-signed proof bound to that original, description, references, wishes,
+identity/output settings and notes, valid for 24 hours. Generating without current
+preparation, using stale image labels, or changing the signed description is
+rejected before creating jobs. The draft can still be edited after preparation.
+Observed location details are expandable under the individual prompt; its final
+scene description is part of the full prompt. This mode requires AI preparation,
+including when other modes allow manual prompts without an assistance key.
+
+The saved job keeps the description and mode choice. Explicit regeneration needs
+only its actual generation references and stored prompt, with no location upload
+or analysis call. Temporary location uploads still join input cleanup after the
+first completed submission, despite being absent from generation inputs. Existing
+S3 retention behavior is unchanged; no schema migration is required.
+
 Keep tattoos is unchecked by default (`keepTattoos: false` on both replacement
 endpoints). The checked state preserves observed tattoos from the selected model,
 or from the original if no model was selected; vision is asked to observe their
