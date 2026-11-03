@@ -17,6 +17,7 @@ class Asset(models.Model):
     mime = models.CharField(max_length=64)
     duration = models.PositiveIntegerField(default=0)
     created = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
     category = models.CharField(max_length=32, blank=True)
     description = models.TextField(blank=True)
     analysis_status = models.CharField(max_length=16, blank=True)
@@ -143,6 +144,7 @@ class ImageGeneration(models.Model):
     error = models.CharField(max_length=255, blank=True)
     lease_until = models.DateTimeField(null=True)
     created = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     class Meta:
         ordering = ["-created"]

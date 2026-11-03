@@ -20,7 +20,14 @@ from .models import Asset, ImageGeneration, Ledger, Wallet
 from .tasks import dispatch
 
 
-@override_settings(CREDITS_ENABLED=True, GENERATION_PROVIDER="mock", CREDITS_PER_IMAGE=3, DEBUG=True, S3_BUCKET="")
+@override_settings(
+    CREDITS_ENABLED=True,
+    GENERATION_PROVIDER="mock",
+    CREDITS_PER_IMAGE=3,
+    DEBUG=True,
+    S3_BUCKET="",
+    SAVE_IMAGES_TO_S3=True,
+)
 class ImageTests(TestCase):
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
@@ -189,7 +196,9 @@ class ImageTests(TestCase):
         response = self.start(references=ids)
         self.assertEqual(response.status_code, 201)
         self.assertEqual(ImageGeneration.objects.get().snapshot["references"], ids)
-        self.assertEqual(self.start(references=[ids[0], ids[0]]).status_code, 400)
+        self.assertEqual(
+            self.start(references=[ids[0], ids[0]], requestKey=str(uuid.uuid4())).status_code, 400
+        )
 
     def test_all_output_dimensions_satisfy_pro_limits(self):
         for resolution in images.RESOLUTIONS:

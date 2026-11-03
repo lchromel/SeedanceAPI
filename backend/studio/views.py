@@ -3,6 +3,8 @@ import re
 import tempfile
 import uuid
 from pathlib import Path
+from django.utils import timezone
+from redis.exceptions import RedisError
 
 from django.conf import settings
 from django.db import transaction, connection, DatabaseError
@@ -14,7 +16,7 @@ from rest_framework.decorators import api_view
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
-from . import byteplus_assets, enhancer, media, provider, references, services, storage
+from . import byteplus_assets, enhancer, image_retention, media, provider, references, services, storage
 from .models import Asset, Chunk, ImageGeneration, Project, Run, Wallet
 from .serializers import ProjectConfig
 
@@ -33,6 +35,7 @@ def asset_data(asset):
         "category": asset.category,
         "description": asset.description,
         "analysisStatus": asset.analysis_status,
+        "expiresAt": asset.expires_at,
     }
 
 
@@ -98,7 +101,9 @@ def bootstrap(request):
                 for p in Project.objects.filter(owner=request.user).order_by("-updated")
             ],
             "assets": [
-                asset_data(a) for a in Asset.objects.filter(owner=request.user).order_by("-created")
+                asset_data(a) for a in image_retention.available_assets(
+                    Asset.objects.filter(owner=request.user)
+                ).order_by("-created")
             ],
             "history": [
                 {"id": e.id, "kind": e.kind, "amount": e.amount, "created": e.created}
@@ -288,8 +293,15 @@ def upload(request):
         ):
             raise ValidationError("Use a valid image up to 25 megapixels.")
         key, mime = f"{request.user.id}/assets/{asset_id}.jpg", "image/jpeg"
+        if kind == "image" and not settings.SAVE_IMAGES_TO_S3:
+            key = f"{request.user.id}/temporary-images/{asset_id}/reference.jpg"
         # S3 upload_fileobj closes its input; keep the preview source independently owned.
-        storage.put(key, io.BytesIO(buffer.getvalue()), mime)
+        try:
+            storage.put(key, io.BytesIO(buffer.getvalue()), mime)
+        except (RedisError, RuntimeError):
+            if storage.is_temporary(key):
+                return Response({"detail": "Temporary image storage is unavailable. Try uploading again."}, status=503)
+            raise
     asset = Asset.objects.create(
         id=asset_id,
         owner=request.user,
@@ -300,6 +312,7 @@ def upload(request):
         duration=duration,
         category=category if kind in references.CATEGORIES else "",
         analysis_status="pending" if kind in references.CATEGORIES else "",
+        expires_at=image_retention.reference_expiry() if storage.is_temporary(key) else None,
     )
     if kind != "motion":
         buffer.seek(0)
@@ -318,6 +331,23 @@ def upload(request):
 def local_media(request, key):
     if not key.startswith(f"{request.user.id}/"):
         raise Http404
+    if storage.is_temporary(key):
+        owned = image_retention.available_assets(Asset.objects.filter(owner=request.user, key=key)).exists()
+        owned = owned or ImageGeneration.objects.filter(
+            owner=request.user, output_key=key, state="ready", expires_at__gt=timezone.now()
+        ).exists()
+        if not owned:
+            raise Http404
+        try:
+            data = storage.temporary_bytes(key)
+        except FileNotFoundError:
+            raise Http404 from None
+        response = HttpResponse(data if request.method != "HEAD" else b"", content_type="image/jpeg")
+        response["Content-Length"] = len(data)
+        response["Cross-Origin-Resource-Policy"] = "same-origin"
+        if request.GET.get("download") == "1":
+            response["Content-Disposition"] = 'attachment; filename="image.jpg"'
+        return response
     if settings.S3_BUCKET:
         owned = (
             Asset.objects.filter(owner=request.user, key=key).exists()
@@ -410,6 +440,8 @@ def characters(request):
 
 
 def preview_key(asset):
+    if storage.is_temporary(asset.key):
+        return asset.key.replace("/reference.jpg", "/preview.jpg")
     # Source identity is immutable; version changes invalidate old renderings.
     import hashlib
 
@@ -424,7 +456,11 @@ def save_preview(asset, image):
     buffer = io.BytesIO()
     image.convert("RGB").save(buffer, "JPEG", quality=78, optimize=True)
     data = buffer.getvalue()
-    storage.put(preview_key(asset), io.BytesIO(data), "image/jpeg")
+    if storage.is_temporary(asset.key):
+        ttl = max(1, int((asset.expires_at - timezone.now()).total_seconds()))
+        storage.put(preview_key(asset), io.BytesIO(data), "image/jpeg", ttl=ttl)
+    else:
+        storage.put(preview_key(asset), io.BytesIO(data), "image/jpeg")
     return data
 
 
@@ -439,7 +475,7 @@ def asset_preview(request, pk):
 
 
 def asset_preview_response(request, pk, character_only=False):
-    asset = get_object_or_404(Asset, pk=pk, owner=request.user)
+    asset = get_object_or_404(image_retention.available_assets(Asset.objects.all()), pk=pk, owner=request.user)
     if character_only and (asset.kind != "character" or not asset.provider_id):
         raise Http404()
     if not asset.provider_id and not asset.mime.startswith("image/"):

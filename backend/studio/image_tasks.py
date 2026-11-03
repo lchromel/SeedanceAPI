@@ -11,7 +11,7 @@ from django.db import transaction
 from django.utils import timezone
 from PIL import Image
 
-from . import provider, storage
+from . import image_retention, provider, storage
 from .billing import post
 from .models import ImageGeneration
 
@@ -54,7 +54,7 @@ def submit(job):
 @transaction.atomic
 def finish(job_id, state, key="", error=""):
     job = ImageGeneration.objects.select_for_update().get(pk=job_id)
-    if job.state in ("ready", "error"):
+    if job.state in ("ready", "error", "expired"):
         return
     # Stored costs preserve settlement of reservations made before billing was paused.
     if job.cost:
@@ -65,8 +65,11 @@ def finish(job_id, state, key="", error=""):
             f"image:{job.id}:final",
         )
     job.state, job.output_key, job.error, job.lease_until = state, key, error, None
+    if state == "ready" and job.snapshot.get("temporary_output"):
+        job.expires_at = timezone.now() + timedelta(seconds=job.snapshot["download_ttl_seconds"])
     job.provider_output_url = ""
     job.save()
+    transaction.on_commit(lambda: image_retention.release_references(job))
 
 
 @shared_task
@@ -89,6 +92,11 @@ def process_image(job_id):
     elif submitting:
         try:
             job.provider_output_url = submit(job)
+        except FileNotFoundError:
+            finish(
+                job.id, "error", error="A temporary reference expired. Upload the reference again."
+            )
+            return
         except provider.Rejected as exc:
             finish(job.id, "error", error=str(exc))
             return
@@ -98,12 +106,14 @@ def process_image(job_id):
                 lease_until=None,
                 error="Submission outcome needs administrator review. No automatic resubmission.",
             )
+            image_retention.release_references(job)
             return
         # Persist the URL before downloading. A worker restart must never resubmit.
         ImageGeneration.objects.filter(pk=job.id).update(
             state="downloading",
             provider_output_url=job.provider_output_url,
         )
+        image_retention.release_references(job)
     try:
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "output.jpg"
@@ -119,8 +129,13 @@ def process_image(job_id):
                 clean = image.convert("RGB")
             clean.save(path, "JPEG", quality=95)
             key = f"{job.owner_id}/images/{job.id}.jpg"
+            if job.snapshot.get("temporary_output"):
+                key = f"{job.owner_id}/temporary-images/{job.id}/output.jpg"
             with path.open("rb") as stream:
-                storage.put(key, stream, "image/jpeg")
+                if job.snapshot.get("temporary_output"):
+                    storage.put(key, stream, "image/jpeg", ttl=job.snapshot["download_ttl_seconds"])
+                else:
+                    storage.put(key, stream, "image/jpeg")
         finish(job.id, "ready", key)
     except Exception:
         # The paid result is known; retry only its download/storage, never generation.

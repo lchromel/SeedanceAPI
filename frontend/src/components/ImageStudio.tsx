@@ -10,6 +10,7 @@ const stateLabels: Record<ImageGeneration["state"], string> = {
   review: "Needs review",
   ready: "Ready",
   error: "Generation failed",
+  expired: "Image deleted",
 };
 const pending = (job: ImageGeneration) =>
   ["queued", "generating", "downloading"].includes(job.state);
@@ -89,6 +90,46 @@ export function ImageStudio({
       clearInterval(timer);
     };
   }, [active, onRefresh]);
+
+  useEffect(() => {
+    const deadlines = jobs
+      .filter((job) => job.state === "ready" && job.expiresAt)
+      .map((job) => Date.parse(job.expiresAt!));
+    if (!deadlines.length) return;
+    const timer = setTimeout(
+      () =>
+        setJobs((items) =>
+          items.map((job) =>
+            job.state === "ready" &&
+            job.expiresAt &&
+            Date.parse(job.expiresAt) <= Date.now()
+              ? {
+                  ...job,
+                  state: "expired",
+                  url: null,
+                  downloadUrl: null,
+                  error:
+                    "This temporary image has been deleted. Generate a new image to continue.",
+                }
+              : job,
+          ),
+        ),
+      Math.max(0, Math.min(...deadlines) - Date.now()) + 50,
+    );
+    return () => clearTimeout(timer);
+  }, [jobs]);
+
+  useEffect(() => {
+    setReferences((ids) =>
+      ids.filter((id) =>
+        boot.assets.some(
+          (asset) =>
+            asset.id === id &&
+            (!asset.expiresAt || Date.parse(asset.expiresAt) > Date.now()),
+        ),
+      ),
+    );
+  }, [boot.assets]);
 
   async function attach(files: FileList | File[]) {
     if (uploadLock.current || submitting) return;
@@ -176,6 +217,7 @@ export function ImageStudio({
       });
       setJobs((items) => [job, ...items.filter((item) => item.id !== job.id)]);
       setSelected(job.id);
+      if (job.temporary) setReferences([]);
       requestKey.current = null;
       await onRefresh();
     } catch (e) {
@@ -248,6 +290,15 @@ export function ImageStudio({
                 <small>
                   {current.ratio} · {current.resolution} · {current.size} px
                 </small>
+                {current.expiresAt && current.state === "ready" && (
+                  <small>
+                    Download before{" "}
+                    {new Date(current.expiresAt).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </small>
+                )}
               </div>
               {current.downloadUrl && (
                 <a className="button" href={current.downloadUrl} download>
@@ -303,6 +354,12 @@ export function ImageStudio({
             <h2>Create an image</h2>
             <small>Seedream 5 Pro</small>
           </div>
+          {settings.storage === "temporary" && (
+            <p className="image-notice">
+              References are deleted after generation. Download your result
+              within {Math.ceil(settings.downloadTtlSeconds / 60)} min.
+            </p>
+          )}
           <fieldset disabled={locked} className="image-composer-fields">
             <section className="image-references" aria-label="Reference images">
               <div className="image-section-label">

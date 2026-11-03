@@ -13,6 +13,7 @@ export interface Asset {
   warning?: string;
   source?: "byteplus" | "upload";
   status?: string;
+  expiresAt?: string | null;
 }
 export interface Config {
   character: string | null;
@@ -57,6 +58,8 @@ export interface Bootstrap {
     pricing: number | null;
     assistanceEnabled: boolean;
     generationEnabled: boolean;
+    storage: "s3" | "temporary";
+    downloadTtlSeconds: number;
   };
   assetCategories: Partial<Record<Kind, Record<string, string>>>;
   user: { id: number; name: string };
@@ -69,7 +72,16 @@ export interface Bootstrap {
 }
 export interface ImageGeneration {
   id: string;
-  state: "queued" | "generating" | "downloading" | "review" | "ready" | "error";
+  state:
+    | "queued"
+    | "generating"
+    | "downloading"
+    | "review"
+    | "ready"
+    | "error"
+    | "expired";
+  expiresAt: string | null;
+  temporary: boolean;
   prompt: string;
   references: string[];
   ratio: string;

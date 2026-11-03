@@ -143,3 +143,12 @@ SEEDREAM_MODEL = (
     or "dola-seedream-5-0-pro-260628"
 )
 CREDITS_PER_IMAGE = int(os.environ["CREDITS_PER_IMAGE"]) if os.getenv("CREDITS_PER_IMAGE") else None
+SAVE_IMAGES_TO_S3 = os.getenv("SAVE_IMAGES_TO_S3", "1") == "1"
+IMAGE_REFERENCE_TTL_SECONDS = int(os.getenv("IMAGE_REFERENCE_TTL_SECONDS", "3600"))
+IMAGE_DOWNLOAD_TTL_SECONDS = int(os.getenv("IMAGE_DOWNLOAD_TTL_SECONDS", "600"))
+if IMAGE_REFERENCE_TTL_SECONDS <= 0 or IMAGE_DOWNLOAD_TTL_SECONDS <= 0:
+    raise ImproperlyConfigured("Image retention periods must be positive seconds")
+IMAGE_TEMP_REDIS_URL = (
+    os.getenv("IMAGE_TEMP_REDIS_URL") or os.getenv("REDIS_URL")
+    or ("redis://localhost:6379/0" if DEBUG else "")
+)

@@ -13,7 +13,7 @@ from PIL import Image
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
-from . import enhancer, storage
+from . import enhancer, image_retention, storage
 from .billing import post
 from .models import Asset, ImageGeneration, Wallet
 
@@ -61,6 +61,8 @@ def configuration():
         "maxReferences": 10,
         "ratios": list(RATIOS),
         "resolutions": list(RESOLUTIONS),
+        "storage": "s3" if settings.SAVE_IMAGES_TO_S3 else "temporary",
+        "downloadTtlSeconds": settings.IMAGE_DOWNLOAD_TTL_SECONDS,
         "pricing": settings.CREDITS_PER_IMAGE if settings.CREDITS_ENABLED else 0,
         "assistanceEnabled": bool(settings.ARK_API_KEY),
         "generationEnabled": bool(
@@ -75,7 +77,11 @@ def configuration():
                     and settings.ARK_API_KEY
                     and settings.SEEDREAM_MODEL
                     and settings.OUTPUT_HOSTS
-                    and settings.S3_BUCKET
+                    and (
+                        settings.S3_BUCKET
+                        if settings.SAVE_IMAGES_TO_S3
+                        else settings.IMAGE_TEMP_REDIS_URL
+                    )
                 )
             )
         ),
@@ -92,8 +98,10 @@ class ImageInput(serializers.Serializer):
     def validate_references(self, ids):
         if len(ids) != len(set(ids)):
             raise ValidationError("Each reference must be attached only once.")
-        if Asset.objects.filter(
-            owner=self.context["user"], id__in=ids, kind="image", mime="image/jpeg"
+        if image_retention.available_assets(
+            Asset.objects.filter(
+                owner=self.context["user"], id__in=ids, kind="image", mime="image/jpeg"
+            )
         ).count() != len(ids):
             raise ValidationError("An image reference is unavailable. Attach it again.")
         return [str(pk) for pk in ids]
@@ -232,8 +240,17 @@ def generate(user, data):
             "reference_keys": [assets[pk].key for pk in data["references"]],
             "provider": settings.GENERATION_PROVIDER,
             "model": settings.SEEDREAM_MODEL,
+            "temporary_output": not settings.SAVE_IMAGES_TO_S3,
+            "download_ttl_seconds": settings.IMAGE_DOWNLOAD_TTL_SECONDS,
         },
     )
     if job.cost:
         post(user.id, "reserve", job.cost, f"image:{job.id}:reserve")
+    try:
+        job.snapshot["reference_keys"] = image_retention.prepare_references(
+            job.id, [assets[pk] for pk in data["references"]]
+        )
+    except FileNotFoundError:
+        raise ValidationError("A temporary reference expired. Upload the image again.") from None
+    job.save(update_fields=["snapshot"])
     return job

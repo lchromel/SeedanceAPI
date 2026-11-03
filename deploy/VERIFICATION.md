@@ -1,5 +1,21 @@
 # Local verification — 2026-09-19
 
+## Temporary Image studio storage — 2026-11-03
+
+- Django: 105 tests on SQLite (103 passed, two PostgreSQL locking tests skipped).
+  Ten retention tests cover private temporary uploads/previews/downloads, deletion
+  after generation, TTL expiration without application cleanup, independent copies
+  for concurrent jobs, inline provider inputs, storage-mode changes, safe handling
+  of expired input and unknown submissions, rollback and no S3 fallback.
+- The temporary store uses a clock-controlled Redis test double in these tests;
+  an actual Railway Redis instance and its persistence/backups were not exercised.
+  Existing S3 upload regression coverage also passed.
+- TypeScript/Vite production build, Python lint, migration drift and whitespace
+  checks passed. Browser verification of this revision remains unavailable because
+  the connected browser session was unavailable. No paid model requests were made.
+
+## Original verification
+
 - Django: **33 tests passed against PostgreSQL 16**, including concurrent reservations from two projects and duplicate generation requests. No skips.
 - Frontend: **4 tests passed**, covering 30-second viewing segments, shorter provider jobs, boundary crossings, errors and ambiguous submissions.
 - TypeScript and Vite production build passed. Python lint and migration drift checks passed. Production Django security checks passed with synthetic configuration (no external connection).

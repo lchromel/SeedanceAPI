@@ -249,3 +249,53 @@ repair preserves the user's draft.
 
 API reference: [BytePlus image generation](https://docs.byteplus.com/en/docs/modelark/image-generation-api),
 [Seedream 5 Pro examples](https://docs.byteplus.com/en/docs/modelark/seedream-5-0-pro).
+
+### Image storage switch and temporary retention
+
+Set the same variables on web and generation worker (and the scheduler for
+metadata cleanup), then deploy with migrations:
+
+```
+SAVE_IMAGES_TO_S3=0
+IMAGE_REFERENCE_TTL_SECONDS=3600
+IMAGE_DOWNLOAD_TTL_SECONDS=600
+```
+
+- `SAVE_IMAGES_TO_S3=1` is the default: new Image studio references/previews and
+  generated results retain the existing private S3 behavior.
+- `SAVE_IMAGES_TO_S3=0` routes new Image studio references/previews and generated
+  results exclusively to a shared, private Redis buffer in Railway. No new image
+  bytes for this section are written to S3, including when a bucket is configured.
+  There is no fallback to S3 if the temporary buffer is unavailable.
+- `IMAGE_TEMP_REDIS_URL` selects a dedicated private Redis instance for temporary
+  images. If unset, `REDIS_URL` is used. Both web and worker must use the same URL.
+  Redis holds the bytes; PostgreSQL stores IDs, deadlines and generation metadata.
+  Worker-local processing files use a temporary directory removed at task exit.
+- Unused source references expire after `IMAGE_REFERENCE_TTL_SECONDS` (default one
+  hour). Each queued generation gets independent reference copies with the same
+  TTL. A very long queue can therefore expire safely before any provider request.
+- After provider submission returns, source references/previews and that job's
+  input copies are deleted. Mock jobs delete them after completion. Confirmed
+  failures and uncertain submissions also release these temporary bytes. Other
+  already-queued jobs keep their own copies.
+- A completed result expires after `IMAGE_DOWNLOAD_TTL_SECONDS` (default ten
+  minutes). Redis TTL deletes the bytes independently of Celery. The authenticated
+  media endpoint refuses expired downloads; the UI shows the download deadline
+  and then Image deleted. Beat also removes expired reference records and clears
+  expired output keys. IDs, prompt text and generation history remain in the DB.
+- Storage choice and result lifetime are snapshotted when a generation is created.
+  Changing the switch does not move/delete earlier S3 files or change queued jobs'
+  result retention. Video outputs and look-library assets keep their existing
+  storage behavior; production still needs its S3 configuration for those features.
+
+This uses shared Redis because the web service's filesystem is not shared with
+the generation worker; do not mount one Railway volume on several services.
+[Railway volume reference](https://docs.railway.com/volumes/reference).
+
+TTL/DEL revoke the application's live copies. For a genuinely non-persistent
+temporary buffer, use a dedicated Redis configured without RDB snapshots, AOF
+or volume backups (for example, a dedicated server started with `--save ""`
+and `--appendonly no`). Do not change persistence of the application's existing
+broker without considering its other uses. Deleting a Redis key does not purge
+older snapshots/backups, and does not control copies held by BytePlus or already
+downloaded by the user. [Redis persistence](https://redis.io/docs/latest/management/persistence/).

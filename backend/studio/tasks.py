@@ -8,7 +8,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from . import media, provider, storage
+from . import image_retention, media, provider, storage
 from .billing import post
 from .models import Chunk, LoginBucket, Run
 from .image_tasks import process_image
@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 @shared_task
 def dispatch():
     now = timezone.now()
+    image_retention.expire_records()
     LoginBucket.objects.filter(window__lt=now - timedelta(days=1)).delete()
     from .models import ImageGeneration
 
