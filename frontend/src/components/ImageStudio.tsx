@@ -185,7 +185,8 @@ export function ImageStudio({
     }
   }
   const price = settings.pricing;
-  const insufficient = price !== null && boot.wallet.available < price;
+  const insufficient =
+    boot.creditsEnabled && price !== null && boot.wallet.available < price;
   return (
     <main className="workspace image-workspace" hidden={hidden}>
       <header className="project-header">
@@ -470,9 +471,11 @@ export function ImageStudio({
           <footer className="generate-footer image-generate-footer">
             <div>
               <span>1 image · {resolution}</span>
-              <span>
-                {price ? `${price} credits` : "Pricing not configured"}
-              </span>
+              {boot.creditsEnabled && (
+                <span>
+                  {price ? `${price} credits` : "Pricing not configured"}
+                </span>
+              )}
             </div>
             <Button
               primary

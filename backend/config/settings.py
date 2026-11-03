@@ -98,6 +98,7 @@ ARK_API_KEY = os.getenv("ARK_API_KEY", "")
 ARK_MODEL = os.getenv("ARK_MODEL", "")
 ARK_BASE_URL = "https://ark.ap-southeast.bytepluses.com/api/v3"
 PROVIDER_MAX_SECONDS = int(os.getenv("PROVIDER_MAX_SECONDS", "30"))
+CREDITS_ENABLED = os.getenv("CREDITS_ENABLED", "0") == "1"
 CREDITS_PER_SECOND = (
     int(os.environ["CREDITS_PER_SECOND"]) if os.getenv("CREDITS_PER_SECOND") else None
 )

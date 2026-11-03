@@ -20,7 +20,7 @@ from .models import Asset, ImageGeneration, Ledger, Wallet
 from .tasks import dispatch
 
 
-@override_settings(GENERATION_PROVIDER="mock", CREDITS_PER_IMAGE=3, DEBUG=True, S3_BUCKET="")
+@override_settings(CREDITS_ENABLED=True, GENERATION_PROVIDER="mock", CREDITS_PER_IMAGE=3, DEBUG=True, S3_BUCKET="")
 class ImageTests(TestCase):
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
@@ -123,6 +123,46 @@ class ImageTests(TestCase):
         with override_settings(CREDITS_PER_IMAGE=None):
             self.assertEqual(self.start().status_code, 400)
         self.assertFalse(Ledger.objects.exists())
+
+    @override_settings(CREDITS_ENABLED=False, CREDITS_PER_IMAGE=None)
+    def test_paused_credits_allow_zero_balance_image_without_pricing_or_ledger(self):
+        Wallet.objects.filter(user=self.user).update(available=0)
+        config = images.configuration()
+        self.assertTrue(config["generationEnabled"])
+        self.assertEqual(config["pricing"], 0)
+        first, duplicate = self.start(), self.start()
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(first.data["id"], duplicate.data["id"])
+        self.assertEqual(first.data["cost"], 0)
+        image_tasks.process_image(first.data["id"])
+        image_tasks.process_image(first.data["id"])
+        self.assertEqual(ImageGeneration.objects.get().state, "ready")
+        wallet = Wallet.objects.get(user=self.user)
+        self.assertEqual((wallet.available, wallet.held, wallet.spent), (0, 0, 0))
+        self.assertFalse(Ledger.objects.exists())
+
+    @override_settings(CREDITS_ENABLED=False, CREDITS_PER_IMAGE=100)
+    def test_paused_credits_ignore_tariff_and_remain_zero_when_enabled_before_completion(self):
+        Wallet.objects.filter(user=self.user).update(available=0)
+        response = self.start()
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["cost"], 0)
+        with override_settings(CREDITS_ENABLED=True):
+            image_tasks.finish(response.data["id"], "ready", "output.jpg")
+        self.assertFalse(Ledger.objects.exists())
+
+    def test_existing_image_reservation_settles_after_billing_is_paused(self):
+        response = self.start()
+        with override_settings(CREDITS_ENABLED=False):
+            image_tasks.finish(response.data["id"], "ready", "output.jpg")
+        wallet = Wallet.objects.get(user=self.user)
+        self.assertEqual((wallet.available, wallet.held, wallet.spent), (27, 0, 3))
+
+    @override_settings(CREDITS_ENABLED=False, GENERATION_PROVIDER="byteplus", ARK_API_KEY="")
+    def test_pausing_credits_still_requires_the_image_provider(self):
+        self.assertFalse(images.configuration()["generationEnabled"])
+        self.assertEqual(self.start().status_code, 400)
+        self.assertFalse(ImageGeneration.objects.exists())
 
     def test_validation_precedes_submission(self):
         other = Asset.objects.create(

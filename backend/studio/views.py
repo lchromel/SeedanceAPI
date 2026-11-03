@@ -89,7 +89,8 @@ def bootstrap(request):
                 "spent": wallet.spent,
             },
             "assetCategories": references.CATEGORIES,
-            "pricing": settings.CREDITS_PER_SECOND,
+            "creditsEnabled": settings.CREDITS_ENABLED,
+            "pricing": settings.CREDITS_PER_SECOND if settings.CREDITS_ENABLED else 0,
             "simulation": settings.GENERATION_PROVIDER == "mock",
             "images": configuration(),
             "projects": [

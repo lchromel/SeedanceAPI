@@ -411,6 +411,7 @@ export default function App() {
             onLibrary={() => setLibrary("motion")}
             busy={busy}
             pricing={boot.pricing}
+            creditsEnabled={boot.creditsEnabled}
             assets={boot.assets}
           />
         </div>
@@ -546,7 +547,7 @@ export default function App() {
           </form>
         </Modal>
       )}
-      {history && (
+      {history && boot.creditsEnabled && (
         <Modal title="Credit history" onClose={() => setHistory(false)}>
           <div className="history-summary">
             <strong>{boot.wallet.available.toLocaleString()}</strong>

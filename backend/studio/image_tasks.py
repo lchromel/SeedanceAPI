@@ -56,9 +56,14 @@ def finish(job_id, state, key="", error=""):
     job = ImageGeneration.objects.select_for_update().get(pk=job_id)
     if job.state in ("ready", "error"):
         return
-    post(
-        job.owner_id, "settle" if state == "ready" else "release", job.cost, f"image:{job.id}:final"
-    )
+    # Stored costs preserve settlement of reservations made before billing was paused.
+    if job.cost:
+        post(
+            job.owner_id,
+            "settle" if state == "ready" else "release",
+            job.cost,
+            f"image:{job.id}:final",
+        )
     job.state, job.output_key, job.error, job.lease_until = state, key, error, None
     job.provider_output_url = ""
     job.save()
@@ -91,7 +96,7 @@ def process_image(job_id):
             ImageGeneration.objects.filter(pk=job.id).update(
                 state="review",
                 lease_until=None,
-                error="Submission outcome needs administrator review. Credits remain reserved.",
+                error="Submission outcome needs administrator review. No automatic resubmission.",
             )
             return
         # Persist the URL before downloading. A worker restart must never resubmit.

@@ -24,7 +24,7 @@ from .services import generate, retry, split_duration
 from .tasks import assemble, dispatch, finish, process_chunk
 
 
-@override_settings(CREDITS_PER_SECOND=1, GENERATION_PROVIDER="mock", PROVIDER_MAX_SECONDS=30)
+@override_settings(CREDITS_ENABLED=True, CREDITS_PER_SECOND=1, GENERATION_PROVIDER="mock", PROVIDER_MAX_SECONDS=30)
 class StudioTests(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user("alice", "", "test-only-long-password")
@@ -85,6 +85,51 @@ class StudioTests(TestCase):
         self.assertEqual(Run.objects.count(), 0)
         self.assertEqual(Chunk.objects.count(), 0)
         self.assertEqual(Wallet.objects.get(user=self.user).available, 40)
+
+    @override_settings(CREDITS_ENABLED=False, CREDITS_PER_SECOND=None)
+    def test_paused_credits_allow_zero_balance_video_without_pricing_or_ledger(self):
+        Wallet.objects.filter(user=self.user).update(available=0)
+        entries = Ledger.objects.count()
+        key = uuid.uuid4()
+        run = self.start(key)
+        self.assertEqual(self.start(key).pk, run.pk)
+        self.assertEqual(list(run.chunks.values_list("cost", flat=True)), [0, 0])
+        first, second = run.chunks.all()
+        finish(first.pk, "error", message="Confirmed failure")
+        retry(self.user, first.pk)
+        finish(first.pk, "ready", "retried.mp4")
+        finish(second.pk, "ready", "second.mp4")
+        wallet = Wallet.objects.get(user=self.user)
+        self.assertEqual((wallet.available, wallet.held, wallet.spent), (0, 0, 0))
+        self.assertEqual(Ledger.objects.count(), entries)
+        self.assertFalse(self.client.get("/api/bootstrap").data["creditsEnabled"])
+
+    @override_settings(CREDITS_ENABLED=False, CREDITS_PER_SECOND=100)
+    def test_paused_credits_ignore_existing_video_tariff(self):
+        Wallet.objects.filter(user=self.user).update(available=0)
+        run = self.start()
+        self.assertFalse(run.chunks.exclude(cost=0).exists())
+
+    def test_video_reservations_finish_after_pause_and_retries_need_no_credits(self):
+        run = self.start()
+        first, second = run.chunks.all()
+        with override_settings(CREDITS_ENABLED=False):
+            finish(first.pk, "ready", "first.mp4")
+            finish(second.pk, "error", message="Confirmed failure")
+            entries = Ledger.objects.count()
+            retry(self.user, second.pk)
+            second.refresh_from_db()
+            self.assertEqual(second.cost, 0)
+            finish(second.pk, "ready", "retry.mp4")
+            self.assertEqual(Ledger.objects.count(), entries)
+        wallet = Wallet.objects.get(user=self.user)
+        self.assertEqual((wallet.available, wallet.held, wallet.spent), (970, 0, 30))
+
+    @override_settings(CREDITS_ENABLED=False, GENERATION_PROVIDER="byteplus", ARK_API_KEY="")
+    def test_pausing_credits_still_requires_the_video_provider(self):
+        with self.assertRaises(ValidationError):
+            self.start()
+        self.assertFalse(Run.objects.exists())
 
     def test_settle_once(self):
         chunk = self.start().chunks.first()
@@ -465,7 +510,7 @@ class StudioTests(TestCase):
         self.assertNotIn(str(old.id), [r["id"] for r in data["runs"]])
 
 
-@override_settings(CREDITS_PER_SECOND=1, GENERATION_PROVIDER="mock", PROVIDER_MAX_SECONDS=30)
+@override_settings(CREDITS_ENABLED=True, CREDITS_PER_SECOND=1, GENERATION_PROVIDER="mock", PROVIDER_MAX_SECONDS=30)
 @skipUnlessDBFeature("has_select_for_update")
 class PostgresConcurrencyTests(TransactionTestCase):
     def setUp(self):

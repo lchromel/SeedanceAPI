@@ -48,6 +48,7 @@ export interface Project {
   runs: Run[];
 }
 export interface Bootstrap {
+  creditsEnabled: boolean;
   images: {
     model: string;
     maxReferences: number;

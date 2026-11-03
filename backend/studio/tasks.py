@@ -72,12 +72,14 @@ def finish(chunk_id, state, key="", message=""):
         )
         if chunk.state in ("ready", "error"):
             return
-        post(
-            chunk.run.project.owner_id,
-            "settle" if state == "ready" else "release",
-            chunk.cost,
-            f"{chunk.id}:{chunk.attempt}:final",
-        )
+        # Finish earlier reservations by their stored cost, even if billing was paused.
+        if chunk.cost:
+            post(
+                chunk.run.project.owner_id,
+                "settle" if state == "ready" else "release",
+                chunk.cost,
+                f"{chunk.id}:{chunk.attempt}:final",
+            )
         chunk.state, chunk.output_key, chunk.error = state, key, message
         chunk.lease_until = None
         if (
@@ -193,7 +195,7 @@ def process_chunk(chunk_id):
             if now - chunk.started > timedelta(hours=24):
                 Chunk.objects.filter(id=chunk.id).update(
                     state="review",
-                    error="Provider task needs review; credits remain reserved.",
+                    error="Provider task needs administrator review.",
                 )
             Chunk.objects.filter(id=chunk.id).update(
                 lease_until=None, next_poll=now + timedelta(seconds=15)
@@ -202,7 +204,7 @@ def process_chunk(chunk_id):
         if now - chunk.started > timedelta(hours=24):
             Chunk.objects.filter(id=chunk.id).update(
                 state="review",
-                error="The task needs administrator review; credits remain reserved.",
+                error="The task needs administrator review.",
                 lease_until=None,
             )
             return

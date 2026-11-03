@@ -29,7 +29,12 @@ Add Railway PostgreSQL and Redis. Reference their **private** connection URLs fr
 - `ARK_API_KEY`, `ARK_MODEL`: verified key and enabled video model/endpoint.
 - `PROVIDER_MAX_SECONDS`: verified maximum of that model (default 30). Shorter limits produce additional provider clips, preserving the total duration.
 - `PROVIDER_OUTPUT_HOSTS`: exact trusted output hostnames or domain suffixes documented by the provider. Required before paid generation; redirects are refused. Do not use broad suffixes such as `com`.
-- `CREDITS_PER_SECOND`: integer internal tariff chosen by the administrator. Unset means generation is disabled. There is no automatic starting balance or invented production tariff.
+- `CREDITS_ENABLED=0`: default while building the platform. Image/video generation
+  does not require pricing or a positive credit balance; no internal credit ledger
+  entries are created for these new jobs. Credit amounts and history are hidden
+  in the UI. Model-provider charges still apply.
+- `CREDITS_PER_SECOND`: video tariff used only with `CREDITS_ENABLED=1`. Without
+  a configured tariff, enabled credit billing blocks new video generations.
 
 Never set `STUDIO_DEBUG=1` or `GENERATION_PROVIDER=mock` in production. Keep services behind Railway's edge; the application trusts its HTTPS forwarded-protocol header. No access logs are emitted by Gunicorn. Celery warning logs carry IDs, not task payloads (tasks accept IDs only).
 
@@ -44,6 +49,13 @@ python manage.py grant_credits USERNAME 2000 --reference INITIAL-ALLOCATION-001
 ```
 
 `create_member` prompts privately for a password, validates it, and creates a non-staff member. Enroll each member's authenticator. No plaintext passwords are stored. Credit allocation references are idempotent; 2000 above is an example, not an applied allocation.
+
+Credit allocation is optional while `CREDITS_ENABLED=0`. To restore credit billing,
+set `CREDITS_ENABLED=1`, `CREDITS_PER_SECOND` and `CREDITS_PER_IMAGE` consistently
+on web, generation worker and scheduler, then restart them. Existing wallet
+balances and history are retained. Reservations from before the pause finish
+using their stored costs; new jobs and retries started during the pause cost zero.
+Jobs created during the pause are not charged retroactively when billing resumes.
 
 ## Job recovery and accounting
 
@@ -97,7 +109,7 @@ python3.11 -m venv .venv
 .venv/bin/pip install -r backend/requirements.lock
 npm --prefix frontend ci
 npm --prefix frontend run build
-export STUDIO_DEBUG=1 GENERATION_PROVIDER=mock CREDITS_PER_SECOND=1
+export STUDIO_DEBUG=1 GENERATION_PROVIDER=mock CREDITS_ENABLED=0
 .venv/bin/python backend/manage.py migrate
 .venv/bin/python backend/manage.py createsuperuser
 .venv/bin/python backend/manage.py grant_credits USERNAME 2000 --reference local-test
@@ -191,7 +203,9 @@ model overrides; these inference calls use the provider's billing.
 
 Set on web, generation worker and scheduler:
 
-- `CREDITS_PER_IMAGE`: a positive integer internal tariff for one generated image.
+- `CREDITS_PER_IMAGE`: required only with `CREDITS_ENABLED=1`; a positive integer
+  internal tariff for one generated image. With the default `CREDITS_ENABLED=0`,
+  image generation is independent of this variable and the user's credit balance.
   There is no default production tariff. The same internal tariff applies to all
   offered sizes/reference counts; this is not a claim about provider pricing.
 - `SEEDREAM_ENDPOINT_ID`: optional Pro endpoint override; default model is
@@ -205,7 +219,7 @@ is needed. The adapter calls `/images/generations`, creates one image per reques
 and offers 1K, 1.5K and 2K with five aspect ratios, sent as explicit pixel sizes.
 There is no batch/streaming parameter or fallback to a different image model.
 
-Credits are reserved atomically with idempotent job creation, settled after the
+When `CREDITS_ENABLED=1`, credits are reserved atomically with idempotent job creation, settled after the
 image is stored privately, and released on confirmed rejection. A timeout during
 paid submission leaves the job in `review`, retaining its reservation. Never
 blindly resubmit it. After checking the provider dashboard, either release a
@@ -221,7 +235,7 @@ generation request. If that URL expires, an administrator must investigate the
 provider result before changing the reservation. The API never exposes provider
 result URLs to the browser; previews/downloads use authenticated private media.
 
-For local simulation, explicitly set `CREDITS_PER_IMAGE=1` and use the existing
+For local simulation, keep `CREDITS_ENABLED=0` and use the existing
 `run_local_jobs` command. Simulation produces a labeled neutral JPEG placeholder
 and makes no generation request. Real DeepSeek assistance remains disabled
 without an ARK key, including in simulation mode.

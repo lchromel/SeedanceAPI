@@ -43,7 +43,9 @@ def generate(user, project_id, part, request_key):
         raise ValidationError("Unknown part.")
     if project.runs.filter(part=part, state__in=["generating", "assembling", "review"]).exists():
         raise ValidationError("This part already has an active generation.")
-    if settings.CREDITS_PER_SECOND is None or settings.CREDITS_PER_SECOND < 0:
+    if settings.CREDITS_ENABLED and (
+        settings.CREDITS_PER_SECOND is None or settings.CREDITS_PER_SECOND < 0
+    ):
         raise ValidationError("An administrator must configure credit pricing first.")
     if settings.GENERATION_PROVIDER != "mock" and (
         not settings.ARK_API_KEY
@@ -102,9 +104,10 @@ def generate(user, project_id, part, request_key):
                 duration=duration,
                 prompt=prompt,
                 motion_asset_id=motion,
-                cost=duration * settings.CREDITS_PER_SECOND,
+                cost=duration * settings.CREDITS_PER_SECOND if settings.CREDITS_ENABLED else 0,
             )
-            post(user.id, "reserve", chunk.cost, f"{chunk.id}:1:reserve")
+            if chunk.cost:
+                post(user.id, "reserve", chunk.cost, f"{chunk.id}:1:reserve")
             start += duration
             index += 1
     # Database is the durable outbox; beat discovers these records even if Redis is down.
@@ -123,7 +126,10 @@ def retry(user, chunk_id):
     if chunk.run.project.runs.filter(part=chunk.run.part, created__gt=chunk.run.created).exists():
         raise ValidationError("A newer version of this part exists.")
     chunk.attempt += 1
-    post(user.id, "reserve", chunk.cost, f"{chunk.id}:{chunk.attempt}:reserve")
+    if not settings.CREDITS_ENABLED:
+        chunk.cost = 0
+    if chunk.cost:
+        post(user.id, "reserve", chunk.cost, f"{chunk.id}:{chunk.attempt}:reserve")
     chunk.state, chunk.error, chunk.provider_id = "queued", "", ""
     chunk.lease_until = chunk.next_poll = chunk.started = None
     chunk.save()

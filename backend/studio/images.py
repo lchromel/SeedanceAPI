@@ -61,11 +61,13 @@ def configuration():
         "maxReferences": 10,
         "ratios": list(RATIOS),
         "resolutions": list(RESOLUTIONS),
-        "pricing": settings.CREDITS_PER_IMAGE,
+        "pricing": settings.CREDITS_PER_IMAGE if settings.CREDITS_ENABLED else 0,
         "assistanceEnabled": bool(settings.ARK_API_KEY),
         "generationEnabled": bool(
-            settings.CREDITS_PER_IMAGE
-            and settings.CREDITS_PER_IMAGE > 0
+            (
+                not settings.CREDITS_ENABLED
+                or (settings.CREDITS_PER_IMAGE is not None and settings.CREDITS_PER_IMAGE > 0)
+            )
             and (
                 simulation
                 or (
@@ -220,7 +222,7 @@ def generate(user, data):
     job = ImageGeneration.objects.create(
         owner=user,
         request_key=data["requestKey"],
-        cost=settings.CREDITS_PER_IMAGE,
+        cost=settings.CREDITS_PER_IMAGE if settings.CREDITS_ENABLED else 0,
         snapshot={
             "prompt": data["prompt"],
             "ratio": data["ratio"],
@@ -232,5 +234,6 @@ def generate(user, data):
             "model": settings.SEEDREAM_MODEL,
         },
     )
-    post(user.id, "reserve", job.cost, f"image:{job.id}:reserve")
+    if job.cost:
+        post(user.id, "reserve", job.cost, f"image:{job.id}:reserve")
     return job

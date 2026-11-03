@@ -183,17 +183,21 @@ export function Sidebar({
               <strong>{user.user.name}</strong>
               <small>Team workspace</small>
             </header>
-            <section className="credits">
-              <span>Available credits</span>
-              <strong>{user.wallet.available.toLocaleString()}</strong>
-              <div className="credit-details">
-                <span>{user.wallet.held} reserved</span>
-                <span>{user.wallet.spent} used</span>
-              </div>
-            </section>
-            <Button onClick={onHistory}>
-              Usage history <Icon name="Chevron" size={16} />
-            </Button>
+            {user.creditsEnabled && (
+              <>
+                <section className="credits">
+                  <span>Available credits</span>
+                  <strong>{user.wallet.available.toLocaleString()}</strong>
+                  <div className="credit-details">
+                    <span>{user.wallet.held} reserved</span>
+                    <span>{user.wallet.spent} used</span>
+                  </div>
+                </section>
+                <Button onClick={onHistory}>
+                  Usage history <Icon name="Chevron" size={16} />
+                </Button>
+              </>
+            )}
             <Button onClick={onLogout}>Sign out</Button>
           </div>
         )}

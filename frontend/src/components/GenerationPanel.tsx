@@ -15,6 +15,7 @@ export function GenerationPanel({
   onLibrary,
   busy,
   pricing,
+  creditsEnabled,
   assets,
 }: {
   project: Project;
@@ -28,6 +29,7 @@ export function GenerationPanel({
   onLibrary: () => void;
   busy: boolean;
   pricing: Bootstrap["pricing"];
+  creditsEnabled: boolean;
   assets: Asset[];
 }) {
   const c = project.config;
@@ -90,7 +92,11 @@ export function GenerationPanel({
           <span>{part === "freeform" ? "01" : "02"}</span>
           <h2>{part === "freeform" ? "Freeform" : "Motion"}</h2>
           {part === "motion" && (
-            <Button className="choose-presets" onClick={onLibrary} disabled={busy || !!active}>
+            <Button
+              className="choose-presets"
+              onClick={onLibrary}
+              disabled={busy || !!active}
+            >
               Choose presets
             </Button>
           )}
@@ -239,15 +245,22 @@ export function GenerationPanel({
                 ? `${time(seconds)} · ${Math.ceil(seconds / 30)} segments`
                 : "Choose a motion preset"}
             </span>
-            <span>
-              {pricing === null
-                ? "Pricing not configured"
-                : `${seconds * pricing} credits`}
-            </span>
+            {creditsEnabled && (
+              <span>
+                {pricing === null
+                  ? "Pricing not configured"
+                  : `${seconds * pricing} credits`}
+              </span>
+            )}
           </div>
           <Button
             primary
-            disabled={busy || !!active || !seconds || pricing === null}
+            disabled={
+              busy ||
+              !!active ||
+              !seconds ||
+              (creditsEnabled && pricing === null)
+            }
             onClick={onGenerate}
           >
             {busy

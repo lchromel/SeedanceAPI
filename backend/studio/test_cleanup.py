@@ -75,7 +75,7 @@ class CleanupTests(TestCase):
         self.assertEqual(self.chunk.cleanup_state, "deleted")
         self.assertIsNotNone(self.chunk.provider_deleted_at)
         self.assertEqual(self.chunk.state, "ready")
-        self.assertEqual(Ledger.objects.count(), 1)
+        self.assertEqual(Ledger.objects.count(), 0)
 
     @patch("studio.tasks.provider.delete_task", side_effect=requests.Timeout)
     def test_failure_retries_without_affecting_result(self, delete):
@@ -94,7 +94,7 @@ class CleanupTests(TestCase):
         cleanup_provider_task(self.chunk.id)
         self.chunk.refresh_from_db()
         self.assertEqual(self.chunk.cleanup_state, "deleted")
-        self.assertEqual(Ledger.objects.count(), 1)
+        self.assertEqual(Ledger.objects.count(), 0)
 
     @patch("studio.tasks.assemble.delay")
     @patch("studio.tasks.cleanup_provider_task.delay")
