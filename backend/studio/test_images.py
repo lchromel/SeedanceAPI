@@ -10,7 +10,7 @@ import boto3
 from botocore.stub import Stubber
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 from PIL import Image
 from rest_framework.test import APIClient
@@ -18,6 +18,32 @@ from rest_framework.test import APIClient
 from . import enhancer, images, image_tasks, provider, storage
 from .models import Asset, ImageGeneration, Ledger, Wallet
 from .tasks import dispatch
+
+
+class ImageCitationTests(SimpleTestCase):
+    def test_grouped_image_lists_ranges_and_wrapped_numbers_are_read_completely(self):
+        for text, expected in (
+            ("Use Images 1 and 2.", {1, 2}),
+            ("Use Image 1 and 2.", {1, 2}),
+            ("Use Images 1, 2 and 3.", {1, 2, 3}),
+            ("Use Images 1–3.", {1, 2, 3}),
+            ("Use references 1 through 3.", {1, 2, 3}),
+            ("Use reference images #1 / #2.", {1, 2}),
+            ("Use Image [1] and Image (2).", {1, 2}),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(images.reference_numbers(text), expected)
+
+    def test_reference_parser_keeps_unknown_ids_and_does_not_count_ordinary_objects(self):
+        for text, expected in (
+            ("Edit Image 1 with two pillows and three lamps.", {1}),
+            ("Edit Image 1, two pillows visible.", {1}),
+            ("Use Images 0–2.", {0, 1, 2}),
+            ("Use Images 1 and 12.", {1, 12}),
+            ("Use Images 1–200.", {1, 200}),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(images.reference_numbers(text), expected)
 
 
 @override_settings(
@@ -282,6 +308,9 @@ class ImageTests(TestCase):
             "Use Image #1 as the base photograph and @Image2 as the identity reference.",
             "Use photo one as the scene and photo two for the face. Match the scene lighting.",
             "Use the 1st photograph as the base and the 2nd photograph for the face.",
+            "Use Images 1 and 2 together for the scene and facial identity, respectively.",
+            "Use Image 1 and 2 for composition and face, respectively.",
+            "Use Images 1–2 for the scene and the face, respectively.",
         ):
             with (
                 self.subTest(prompt=prompt),

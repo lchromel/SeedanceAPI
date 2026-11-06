@@ -10,6 +10,7 @@ from rest_framework.exceptions import ValidationError
 
 from . import enhancer, image_retention, image_vision
 from .models import Asset
+from .image_reference_text import rewrite_observation_references
 
 SALT = "studio.shared-location"
 VERSION = 1
@@ -66,7 +67,9 @@ def create(user, asset_id):
     observations = image_vision.analyze(
         [asset], time.monotonic() + 100, reference_focus={1: focus}, detailed_references=[1]
     )
-    description = observations[0]["description"].strip()
+    description = rewrite_observation_references(
+        observations[0]["description"].strip(), {}, unknown="this location"
+    )
     if len(description) > 2000:
         raise enhancer.EnhancementError(
             "The location description is too long. Try preparing it again."

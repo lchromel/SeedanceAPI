@@ -1,8 +1,10 @@
 """Seedream image inputs, immutable jobs, and reference-aware DeepSeek assistance."""
 
 import json
+import logging
 import re
 import time
+from pathlib import Path
 
 from django.conf import settings
 from django.db import transaction
@@ -12,36 +14,28 @@ from rest_framework.exceptions import ValidationError
 from . import enhancer, image_retention, image_vision
 from .billing import post
 from .models import Asset, ImageGeneration, Wallet
+from .image_reference_text import reference_numbers, rewrite_observation_references
 
 
 RATIOS = {"1:1": (1, 1), "4:3": (4, 3), "3:4": (3, 4), "16:9": (16, 9), "9:16": (9, 16)}
 RESOLUTIONS = {"1K": 1_048_576, "1.5K": 2_359_296, "2K": 4_194_304}
 
-_CARDINALS = "one two three four five six seven eight nine ten".split()
-_ORDINALS = "first second third fourth fifth sixth seventh eighth ninth tenth".split()
-_REFERENCE_WORDS = {word: i for words in (_CARDINALS, _ORDINALS) for i, word in enumerate(words, 1)}
-_IMAGE_NOUN = r"(?:image|photo(?:graph)?|picture)"
-_REFERENCE_NOUN = rf"(?:reference(?:\s+{_IMAGE_NOUN})?|{_IMAGE_NOUN})"
-_NUMBER = r"(?:\d+(?:st|nd|rd|th)?|" + "|".join(_REFERENCE_WORDS) + r")"
-_ORDINAL = r"(?:\d+(?:st|nd|rd|th)|" + "|".join(_ORDINALS) + r")"
-_REFERENCE_MENTION = re.compile(
-    rf"\b{_REFERENCE_NOUN}\s*#?\s*(?P<after>{_NUMBER})\b"
-    rf"|\b(?P<before>{_ORDINAL})\s+{_REFERENCE_NOUN}\b",
-    re.I,
-)
+logger = logging.getLogger(__name__)
+REFERENCE_REPAIR_SYSTEM = (
+    Path(__file__).with_name("prompts") / "seedream_reference_repair.md"
+).read_text()
 
 
-def reference_numbers(text):
-    """Recognize explicit reference identities without changing the generated prose."""
-    numbers = set()
-    for match in _REFERENCE_MENTION.finditer(text):
-        value = (match.group("after") or match.group("before")).lower()
-        numbers.add(
-            _REFERENCE_WORDS[value]
-            if value in _REFERENCE_WORDS
-            else int(re.match(r"\d+", value)[0])
-        )
-    return numbers
+def known_reference_roles(context):
+    """Only server-owned English role assignments can fill omitted reference labels."""
+    if not context.get("replacementPlan"):
+        return {}
+    roles = {1: ["the original photograph to edit"]}
+    for item in context["replacementPlan"].values():
+        match = re.fullmatch(r"Image (\d+)", item["source"])
+        if match:
+            roles.setdefault(int(match[1]), []).append(item["aspect"])
+    return roles
 
 
 def dimensions(resolution, ratio):
@@ -127,16 +121,26 @@ def enhance(
             ],
         )
     generation_refs = [pk for pk in data["references"] if pk not in description_only]
+    observation_labels = {
+        i: f"Image {generation_refs.index(pk) + 1}"
+        if pk in generation_refs
+        else "the described location"
+        for i, pk in enumerate(data["references"], 1)
+    }
     described = []
     generation_observations = []
     for observation, pk in zip(observations, data["references"]):
         if pk in description_only:
-            described.append(observation["description"])
+            described.append(
+                rewrite_observation_references(observation["description"], observation_labels)
+            )
         else:
             generation_observations.append(
                 {
                     "image": generation_refs.index(pk) + 1,
-                    "description": observation["description"],
+                    "description": rewrite_observation_references(
+                        observation["description"], observation_labels
+                    ),
                 }
             )
     writer_system = (
@@ -165,6 +169,10 @@ def enhance(
     }
     if extra_context:
         context.update(extra_context)
+    if context.get("sharedLocationIdentity"):
+        context["sharedLocationIdentity"] = rewrite_observation_references(
+            context["sharedLocationIdentity"], {}, unknown="the shared location"
+        )
     if description_only:
         context["locationDescription"] = "\n\n".join(described)
     # Repair only the writing, once. Reuse the verified visual observations;
@@ -172,7 +180,7 @@ def enhance(
     for attempt in range(2):
         text = enhancer.chat(
             settings.DEEPSEEK_MODEL,
-            writer_system,
+            writer_system if not attempt else REFERENCE_REPAIR_SYSTEM,
             json.dumps(context, ensure_ascii=False),
             max_tokens=2400,
             timeout=image_vision.timeout(deadline, maximum=15 if attempt else 40),
@@ -180,6 +188,23 @@ def enhance(
         if len(text) > 6000:
             raise enhancer.EnhancementError("AI returned a prompt that is too long. Try again.")
         mentioned = reference_numbers(text)
+        if not mentioned - expected:
+            role_map = known_reference_roles(context)
+            additions = []
+            for number in sorted(expected - mentioned):
+                if number in role_map:
+                    additions.append(
+                        f"Use Image {number} for "
+                        + " and ".join(dict.fromkeys(role_map[number]))
+                        + "."
+                    )
+            if additions:
+                text = " ".join(additions) + "\n\n" + text
+                if len(text) > 6000:
+                    raise enhancer.EnhancementError(
+                        "AI returned a prompt that is too long. Try again."
+                    )
+                mentioned = reference_numbers(text)
         if mentioned == expected:
             result = {"prompt": text}
             if description_only:
@@ -193,8 +218,18 @@ def enhance(
                 "missingLabels": [f"Image {i}" for i in sorted(expected - mentioned)],
                 "unknownReferenceNumbers": sorted(mentioned - expected),
             }
+        logger.warning(
+            "Image prompt reference mismatch: expected=%s missing=%s unexpected=%s attempt=%d",
+            sorted(expected),
+            sorted(expected - mentioned),
+            sorted(mentioned - expected),
+            attempt + 1,
+        )
     raise enhancer.EnhancementError(
-        "AI could not match the attached image references. Your original prompt is unchanged; try again."
+        "AI returned inconsistent image labels. "
+        f"Missing: {', '.join(f'Image {i}' for i in sorted(expected - mentioned)) or 'none'}; "
+        f"unexpected: {', '.join(f'Image {i}' for i in sorted(mentioned - expected)) or 'none'}. "
+        "Your original prompt is unchanged; retry writing the prompt."
     )
 
 

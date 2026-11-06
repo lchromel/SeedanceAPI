@@ -751,3 +751,130 @@ class EditingModesTests(TestCase):
         response = self.client.post("/api/images/replacements/generate", data, format="json")
         self.assertEqual(response.status_code, 400)
         self.assertFalse(ImageGeneration.objects.exists())
+
+    def test_known_replacement_roles_fill_omitted_labels_without_another_ai_request(self):
+        original, clothing = self.upload("original"), self.upload("outfit")
+        with patch.object(
+            enhancer,
+            "chat",
+            side_effect=[
+                json.dumps(
+                    {
+                        "images": [
+                            {"image": 1, "description": "Person standing in a room."},
+                            {"image": 2, "description": "A fitted blue jacket."},
+                        ]
+                    }
+                ),
+                "Keep the standing pose and room. Dress the person in the fitted blue jacket with natural fabric folds.",
+            ],
+        ) as chat:
+            response = self.client.post(
+                "/api/images/replacements/prompt",
+                {
+                    "original": str(original.pk),
+                    "replacements": {"clothing": str(clothing.pk)},
+                },
+                format="json",
+            )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(chat.call_count, 2)
+        self.assertIn("Use Image 1 for the original photograph to edit.", response.data["prompt"])
+        self.assertIn("Use Image 2 for the clothing and accessories.", response.data["prompt"])
+        self.assertIn("fitted blue jacket with natural fabric folds", response.data["prompt"])
+        self.assertFalse(ImageGeneration.objects.exists())
+
+    def test_analysis_labels_are_rebound_after_location_exclusion_before_writing(self):
+        original, location, extra = (
+            self.upload("original"),
+            self.upload("location"),
+            self.upload("fabric"),
+        )
+        with patch.object(
+            enhancer,
+            "chat",
+            side_effect=[
+                json.dumps(
+                    {
+                        "images": [
+                            {"image": 1, "description": "Image 1 shows a seated person."},
+                            {
+                                "image": 2,
+                                "description": "Match the bed in Image 2 to the occupied bed in Image 1.",
+                            },
+                            {"image": 3, "description": "Image 3 supplies gray fabric."},
+                        ]
+                    }
+                ),
+                "Edit Image 1 with the gray fabric from Image 2, keeping the seated pose and the same occupied bed.",
+            ],
+        ) as chat:
+            response = self.client.post(
+                "/api/images/replacements/prompt",
+                {
+                    "original": str(original.pk),
+                    "replacements": {"location": str(location.pk)},
+                    "extras": [{"asset": str(extra.pk), "label": "Fabric only"}],
+                    "locationDescriptionOnly": True,
+                },
+                format="json",
+            )
+        self.assertEqual(response.status_code, 200, response.data)
+        context = json.loads(chat.call_args_list[1].args[2])
+        self.assertEqual(
+            context["referenceObservations"][1]["description"], "Image 2 supplies gray fabric."
+        )
+        self.assertEqual(
+            context["locationDescription"],
+            "Match the bed in the described location to the occupied bed in Image 1.",
+        )
+        self.assertNotIn("Image 3", json.dumps(context))
+        self.assertNotIn("Image 3", response.data["prompt"])
+
+    def test_unknown_replacement_labels_still_fail_and_diagnostics_do_not_log_prompt_content(self):
+        original, clothing = self.upload("original"), self.upload("clothing")
+        private_phrase = "PRIVATE SCENE DETAILS MUST NOT APPEAR IN LOGS"
+        with (
+            self.assertLogs("studio.images", level="WARNING") as logs,
+            patch.object(
+                enhancer,
+                "chat",
+                side_effect=[
+                    '{"images":[{"image":1,"description":"Person"},{"image":2,"description":"Coat"}]}',
+                    "Use Image 9 for the coat. " + private_phrase,
+                    "Use Image 9 for the coat. " + private_phrase,
+                ],
+            ) as chat,
+        ):
+            response = self.client.post(
+                "/api/images/replacements/prompt",
+                {
+                    "original": str(original.pk),
+                    "replacements": {"clothing": str(clothing.pk)},
+                },
+                format="json",
+            )
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(chat.call_count, 3)
+        self.assertIn("unexpected: Image 9", response.data["detail"])
+        self.assertIn("Missing: Image 1, Image 2", response.data["detail"])
+        self.assertIn("Repair only the reference citations", chat.call_args_list[2].args[1])
+        self.assertNotIn(private_phrase, "\n".join(logs.output))
+        self.assertFalse(ImageGeneration.objects.exists())
+
+    def test_shared_location_description_drops_its_analysis_image_label(self):
+        location = self.upload("hotel")
+        with patch.object(
+            enhancer,
+            "chat",
+            return_value='{"images":[{"image":1,"description":"Image 1 has cream linens and a walnut headboard."}]}',
+        ):
+            response = self.client.post(
+                "/api/images/replacements/location-profile",
+                {"asset": str(location.pk)},
+                format="json",
+            )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            response.data["description"], "this location has cream linens and a walnut headboard."
+        )

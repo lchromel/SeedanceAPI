@@ -1,5 +1,24 @@
 # Local verification — 2026-09-19
 
+## Frequent image-reference validation failures — 2026-11-06
+
+- Reproduced the previous parser rejecting valid `Images 1 and 2` and
+  `Images 1–3` as having no references, and reading only Image 1 from
+  `Image 1 and 2`. The new parser reads their complete explicit source sets.
+- Django: 153 tests on SQLite (151 passed, two PostgreSQL locking tests skipped).
+  Six new regressions cover grouped/ranged/wrapped references, preserved unknown
+  IDs and ordinary object counts, deterministic known-role completion without
+  another AI call, analysis-to-generation citation rebinding after location
+  exclusion, shared-location label removal and safe numeric diagnostics with
+  continued rejection of unknown references. Existing API format cases were also
+  extended to grouped citations.
+- Python lint, migration drift and whitespace checks passed. No frontend or
+  schema migration changed.
+- Model responses were mocked. Production failure frequency and actual failed
+  provider responses were unavailable; the changes fix reproduced false negatives
+  and provide number-only diagnostics for remaining failures. No paid inference
+  or user photograph was used for these checks.
+
 ## Shared location identity across a series — 2026-11-06
 
 - Django: 147 tests on SQLite (145 passed, two PostgreSQL locking tests skipped).

@@ -340,6 +340,23 @@ wishes, notes, ratio or resolution marks the relevant drafts for review/update
 before generation. The complete writer instructions are versioned in
 `backend/studio/prompts/seedream_replacement.md` and copied into the Docker image.
 
+Reference validation recognizes explicit grouped numeric citations such as
+`Images 1 and 2`, `Image 1 and 2`, comma-separated lists and ascending ranges
+(`Images 1–3`), in addition to the supported individual labels/ordinals. Unknown
+and zero-based IDs still fail validation. Before writing, embedded analysis
+citations are rebound to the actual generation order; an excluded location is
+named as prose. Shared-location observations lose their single-input analysis
+label to avoid confusing the original photograph with the location.
+
+If the writer omits a reference whose English role is already known from the
+server's replacement plan, the application adds that exact role assignment to the
+full prompt without another inference call. Missing extra-reference roles and
+unknown numbers still receive one bounded AI correction using the complete
+instructions in `backend/studio/prompts/seedream_reference_repair.md`. Failed
+correction reports the missing/unexpected Image numbers. Warning diagnostics log
+only those number sets and attempt counts, without prompts, observations, image
+IDs, filenames or credentials.
+
 All editing modes accept captioned extras (`extras: [{asset, label}]`), with a
 combined limit of ten unique images including that original. Captions are required
 and every reference is owner/availability checked. Exact labels are assigned
