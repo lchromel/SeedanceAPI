@@ -55,6 +55,7 @@ def regenerate(user, source, data):
         "location_description_only",
         "location_geometry_version",
         "location_description",
+        "location_profile",
     ):
         if field in source.snapshot:
             job.snapshot[field] = copy.deepcopy(source.snapshot[field])

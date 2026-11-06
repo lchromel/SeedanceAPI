@@ -1,5 +1,20 @@
 # Local verification — 2026-09-19
 
+## Shared location identity across a series — 2026-11-06
+
+- Django: 147 tests on SQLite (145 passed, two PostgreSQL locking tests skipped).
+  Four new regressions cover a single location-profile analysis reused in two
+  distinct per-original requests/jobs, identical shared facts with different
+  pose/support plans, profile tampering and wrong location/owner rejection,
+  unavailable/foreign input and analysis failure, and binding an individual
+  preparation to the specific shared profile used for it.
+- Seven frontend tests, TypeScript/Vite build, Python lint, migration drift and
+  whitespace checks passed. No schema migration is required.
+- Model responses were mocked; actual multi-image visual consistency and live
+  provider requests were not tested. The UI's shared-profile panel requires AI
+  assistance, which is disabled in the local mock preview. No paid model call or
+  user photograph was used for these checks.
+
 ## Matched support geometry for location descriptions — 2026-11-06
 
 - Django: 143 tests on SQLite (141 passed, two PostgreSQL locking tests skipped).

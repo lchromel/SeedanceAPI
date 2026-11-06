@@ -4,7 +4,7 @@ from rest_framework.fields import UUIDField
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 
-from . import enhancer, image_retries, images, replacements, storage
+from . import enhancer, image_retries, images, location_profiles, replacements, storage
 from .models import ImageGeneration
 
 
@@ -81,6 +81,16 @@ def enhance_replacement(request):
     serializer.is_valid(raise_exception=True)
     try:
         return Response(replacements.enhance(request.user, serializer.validated_data))
+    except enhancer.EnhancementError as exc:
+        return Response({"detail": str(exc)}, status=502)
+
+
+@api_view(["POST"])
+def prepare_location(request):
+    serializer = location_profiles.ProfileRequest(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    try:
+        return Response(location_profiles.create(request.user, serializer.validated_data["asset"]))
     except enhancer.EnhancementError as exc:
         return Response({"detail": str(exc)}, status=502)
 

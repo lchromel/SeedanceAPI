@@ -584,3 +584,170 @@ class EditingModesTests(TestCase):
             self.assertEqual(retry.snapshot["location_description"], description)
             self.assertEqual(len(retry.snapshot["reference_keys"]), 3)
             chat.assert_not_called()
+
+    def prepare_shared_location(self, location):
+        identity = "Hotel room with cream linen bedding, a rectangular walnut headboard, warm beige plaster walls and matte brass reading lights. Keep the same observed colors and materials across views."
+        with patch.object(
+            enhancer,
+            "chat",
+            return_value=json.dumps(
+                {
+                    "images": [
+                        {"image": 1, "description": identity},
+                    ]
+                }
+            ),
+        ) as chat:
+            response = self.client.post(
+                "/api/images/replacements/location-profile",
+                {
+                    "asset": str(location.pk),
+                },
+                format="json",
+            )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(chat.call_count, 1)
+        self.assertIn("fixed visual identity", chat.call_args.args[2][1]["text"])
+        return response.data, identity
+
+    def test_shared_location_identity_is_reused_in_distinct_individual_prompts_and_jobs(self):
+        first, second, location = (
+            self.upload("reclining"),
+            self.upload("seated"),
+            self.upload("hotel"),
+        )
+        profile, identity = self.prepare_shared_location(location)
+        data = self.data([first, second], {"location": location})
+        data.update(locationDescriptionOnly=True, locationProfile=profile)
+        descriptions = []
+        for i, original in enumerate((first, second)):
+            observation = (
+                "Reclining person on one bed, low oblique camera."
+                if i == 0
+                else "Person sitting at the edge of one bed, eye-level camera."
+            )
+            transfer = (
+                observation
+                + " Restyle that same bed with cream linens and a walnut headboard; beige plaster and brass lights remain the same hotel identity."
+            )
+            descriptions.append(transfer)
+            with patch.object(
+                enhancer,
+                "chat",
+                side_effect=[
+                    json.dumps(
+                        {
+                            "images": [
+                                {"image": 1, "description": observation},
+                                {"image": 2, "description": transfer},
+                            ]
+                        }
+                    ),
+                    "Edit Image 1. " + transfer,
+                ],
+            ) as chat:
+                response = self.client.post(
+                    "/api/images/replacements/prompt",
+                    {
+                        "original": str(original.pk),
+                        "replacements": data["replacements"],
+                        "instructions": data["instructions"],
+                        "notes": data["originals"][i]["notes"],
+                        "ratio": data["ratio"],
+                        "resolution": data["resolution"],
+                        "locationDescriptionOnly": True,
+                        "locationProfile": profile,
+                    },
+                    format="json",
+                )
+            self.assertEqual(response.status_code, 200, response.data)
+            self.assertEqual(chat.call_count, 2)
+            context = json.loads(chat.call_args_list[1].args[2])
+            self.assertEqual(context["sharedLocationIdentity"], identity)
+            self.assertIn(identity, chat.call_args_list[0].args[2][3]["text"])
+            self.assertEqual(context["referenceObservations"][0]["description"], observation)
+            data["originals"][i].update(
+                {
+                    key: response.data[key]
+                    for key in ("prompt", "locationDescription", "locationPreparation")
+                }
+            )
+        result = self.generate(data)
+        for i, item in enumerate(result.data):
+            job = ImageGeneration.objects.get(pk=item["id"])
+            self.assertEqual(job.snapshot["location_profile"], profile)
+            self.assertEqual(job.snapshot["location_description"], descriptions[i])
+            self.assertEqual(job.snapshot["references"], [str((first, second)[i].pk)])
+        self.assertNotEqual(descriptions[0], descriptions[1])
+
+    def test_shared_location_profile_cannot_be_changed_or_applied_to_another_image_or_owner(self):
+        original, location, other_location = (
+            self.upload("original"),
+            self.upload("hotel"),
+            self.upload("other-hotel"),
+        )
+        profile, _ = self.prepare_shared_location(location)
+        cases = [
+            ({**profile, "description": "A different invented room."}, location),
+            (profile, other_location),
+            ({"asset": str(location.pk)}, location),
+        ]
+        with patch.object(enhancer, "chat") as chat:
+            for supplied, selected in cases:
+                response = self.client.post(
+                    "/api/images/replacements/prompt",
+                    {
+                        "original": str(original.pk),
+                        "replacements": {"location": str(selected.pk)},
+                        "locationProfile": supplied,
+                    },
+                    format="json",
+                )
+                self.assertEqual(response.status_code, 400, response.data)
+            self.client.force_authenticate(self.other)
+            response = self.client.post(
+                "/api/images/replacements/prompt",
+                {
+                    "original": str(original.pk),
+                    "replacements": {"location": str(location.pk)},
+                    "locationProfile": profile,
+                },
+                format="json",
+            )
+            self.assertEqual(response.status_code, 400)
+        chat.assert_not_called()
+        self.assertFalse(ImageGeneration.objects.exists())
+
+    def test_shared_location_endpoint_respects_ownership_and_analysis_failure(self):
+        location = self.upload("hotel")
+        location.owner = self.other
+        location.save()
+        with patch.object(enhancer, "chat") as chat:
+            response = self.client.post(
+                "/api/images/replacements/location-profile",
+                {"asset": str(location.pk)},
+                format="json",
+            )
+        self.assertEqual(response.status_code, 400)
+        chat.assert_not_called()
+        location.owner = self.user
+        location.save()
+        with patch.object(
+            enhancer, "chat", side_effect=enhancer.EnhancementError("Vision unavailable")
+        ):
+            response = self.client.post(
+                "/api/images/replacements/location-profile",
+                {"asset": str(location.pk)},
+                format="json",
+            )
+        self.assertEqual(response.status_code, 502)
+        self.assertFalse(ImageGeneration.objects.exists())
+
+    def test_location_preparation_is_bound_to_the_shared_identity_used_for_that_photo(self):
+        sources, data, _, _ = self.location_batch()
+        profile, _ = self.prepare_shared_location(sources[2])
+        # The existing individual prompt was prepared without this shared identity.
+        data["locationProfile"] = profile
+        response = self.client.post("/api/images/replacements/generate", data, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(ImageGeneration.objects.exists())

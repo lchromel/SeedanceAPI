@@ -11,6 +11,7 @@ urlpatterns = [
     path("api/images/enhance", image_views.enhance_prompt),
     path("api/images/<uuid:pk>/regenerate", image_views.regenerate_image),
     path("api/images/replacements/prompt", image_views.enhance_replacement),
+    path("api/images/replacements/location-profile", image_views.prepare_location),
     path("api/images/replacements/generate", image_views.replacement_batch),
     path("api/projects", views.projects),
     path("api/projects/<uuid:pk>", views.project_detail),

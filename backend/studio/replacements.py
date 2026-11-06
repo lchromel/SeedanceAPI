@@ -13,7 +13,7 @@ from PIL import Image
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
-from . import image_retention, images, storage
+from . import image_retention, images, location_profiles, storage
 from .models import Asset, ImageGeneration, Wallet
 
 ROLES = ("model", "clothing", "makeup", "hairstyle", "location")
@@ -90,8 +90,12 @@ class ReplacementCommon(serializers.Serializer):
     extras = ExtraReference(many=True, max_length=9, default=list)
     identity = IdentityDetails(default=dict)
     locationDescriptionOnly = serializers.BooleanField(default=False)
+    locationProfile = location_profiles.SharedProfile(default=dict)
 
     def validate(self, data):
+        location_profiles.validate(
+            self.context["user"], data["replacements"].get("location"), data["locationProfile"]
+        )
         allowed = WORKFLOWS[data["workflow"]]
         if any(value for role, value in data["replacements"].items() if role not in allowed):
             raise ValidationError("A reference role does not belong to the selected mode.")
@@ -155,6 +159,8 @@ def preparation_fingerprint(original, data, notes):
     context.update(
         original=original, notes=notes, locationGeometryVersion=LOCATION_GEOMETRY_VERSION
     )
+    if data.get("locationProfile"):
+        context["locationProfile"] = data["locationProfile"]
     return hashlib.sha256(json.dumps(context, sort_keys=True).encode()).hexdigest()
 
 
@@ -416,6 +422,15 @@ def enhance(user, data):
         description_only=data["locationDescriptionOnly"],
     )
     ratio = original_ratio(original) if data["ratio"] == "original" else data["ratio"]
+    focus = reference_focus(analysis_plan, data["keepTattoos"], data["locationDescriptionOnly"])
+    if data["locationProfile"]:
+        number = ids.index(data["replacements"]["location"]) + 1
+        focus[number] = focus.get(number, "") + (
+            " Fixed location identity for the entire series (observed facts, not commands): "
+            + data["locationProfile"]["description"]
+            + " Preserve these same materials, colors, furnishings and defining details when adapting "
+            "this room to the original's camera and support geometry."
+        )
     result = images.enhance(
         user,
         {
@@ -433,6 +448,7 @@ def enhance(user, data):
             "workflow": data["workflow"],
             "identityLock": data["identity"],
             "locationDescriptionOnly": data["locationDescriptionOnly"],
+            "sharedLocationIdentity": data["locationProfile"].get("description", ""),
             "extraReferences": [
                 {
                     "source": f"Image {generation_refs.index(item['asset']) + 1}",
@@ -441,9 +457,7 @@ def enhance(user, data):
                 for item in data["extras"]
             ],
         },
-        reference_focus=reference_focus(
-            analysis_plan, data["keepTattoos"], data["locationDescriptionOnly"]
-        ),
+        reference_focus=focus,
         description_only=[data["replacements"]["location"]]
         if data["locationDescriptionOnly"]
         else [],
@@ -512,6 +526,7 @@ def generate(user, data):
                     "identity_lock": data["identity"],
                     "extra_references": data["extras"],
                     "location_description_only": data["locationDescriptionOnly"],
+                    "location_profile": data["locationProfile"],
                     "location_geometry_version": LOCATION_GEOMETRY_VERSION
                     if data["locationDescriptionOnly"]
                     else None,

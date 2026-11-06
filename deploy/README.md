@@ -376,7 +376,29 @@ visible in the crop and plausible support surfaces, rather than only naming the
 location reference. Unseen geometry remains unspecified.
 
 Use location for description only is unchecked by default. Enable it in Photo
-series after uploading a location (`locationDescriptionOnly: true`). Vision
+series after uploading a location (`locationDescriptionOnly: true`). Before the
+individual prompt queue starts, the UI creates one shared location identity via
+`POST /api/images/replacements/location-profile` with `{asset}`. This returns
+`{asset, description, proof}`. The description fixes the observed palette,
+furniture designs/materials, bedding, walls, lights and recognizable details,
+independent of any original photograph's camera or pose. It is displayed in
+Shared location description and reused for batch preparation, single-photo
+enhancement and failed-row retries while the same location is selected. The
+client refreshes the cached identity after 23 hours; changing its proof invalidates
+previously prepared drafts for update.
+
+Individual prompt and generation requests pass the same object as
+`locationProfile`. Its signed proof is valid for 24 hours and binds the owner,
+location image, vision model/version and exact description. Modified, incomplete,
+foreign or mismatched profiles are rejected before AI requests. Existing API
+clients may omit the optional profile and retain per-photo behavior. DeepSeek
+receives the shared identity as the authoritative source for stable room
+appearance, while each photo's separate transfer plan supplies camera, crop,
+body contact and object correspondence. Different crops need not show every room
+feature; visible materials and furniture retain their shared identity. The UI also
+uses this shared identity when the location image remains attached to generation.
+
+Vision
 examines both the original and location with an image edge up to 1280 px and
 requests a joint scene-transfer plan within 2400 characters: Original support,
 Same-object match, Target staging and Appearance. The plan identifies furniture
@@ -412,7 +434,9 @@ including when other modes allow manual prompts without an assistance key.
 
 The saved job keeps the description and mode choice. Explicit regeneration needs
 only its actual generation references and stored prompt, with no location upload
-or analysis call. Temporary location uploads still join input cleanup after the
+or analysis call. The signed shared identity is stored as `location_profile` in
+each job and retained on regeneration. Profiles add no server-side image copy or
+schema migration; the browser keeps its active profile in memory. Temporary location uploads still join input cleanup after the
 first completed submission, despite being absent from generation inputs. Existing
 S3 retention behavior is unchanged; no schema migration is required.
 

@@ -74,6 +74,7 @@ type Original = {
   locationPreparation?: string;
   descriptionFor?: string;
 };
+type SharedLocation = { asset: string; description: string; proof: string };
 const statusLabels: Record<ImageGeneration["state"], string> = {
   queued: "Queued",
   generating: "Generating…",
@@ -142,6 +143,10 @@ export function ReplacementStudio({
   const running = useRef(false);
   const stop = useRef(false);
   const alive = useRef(true);
+  const locationProfile = useRef<{
+    value: SharedLocation;
+    created: number;
+  } | null>(null);
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -175,7 +180,14 @@ export function ReplacementStudio({
     identity,
     locationDescriptionOnly,
   ]);
-  const stamp = (row: Original) => JSON.stringify([fingerprint, row.notes]);
+  const sharedLocation = () => {
+    const cached = locationProfile.current;
+    return cached && cached.value.asset === replacements.location?.id
+      ? cached.value
+      : undefined;
+  };
+  const stamp = (row: Original) =>
+    JSON.stringify([fingerprint, row.notes, sharedLocation()?.proof]);
   const prepared = originals.filter(
     (row) =>
       row.prompt.trim() &&
@@ -337,9 +349,25 @@ export function ReplacementStudio({
     let completed = 0,
       succeeded = 0,
       failed = 0;
+    let invalidProfile = false;
     const shouldStop = () =>
       stop.current || !alive.current || version.current !== currentVersion;
     try {
+      if (
+        replacements.location &&
+        (!sharedLocation() ||
+          Date.now() - locationProfile.current!.created > 23 * 60 * 60 * 1000)
+      ) {
+        setProgress("Preparing the shared location description…");
+        const value = await api<SharedLocation>(
+          "images/replacements/location-profile",
+          "POST",
+          { asset: replacements.location.id },
+        );
+        if (!alive.current || version.current !== currentVersion) return;
+        locationProfile.current = { value, created: Date.now() };
+      }
+      if (shouldStop()) return;
       await runPromptQueue(
         rows,
         parallelism,
@@ -365,6 +393,7 @@ export function ReplacementStudio({
               resolution,
               keepTattoos,
               locationDescriptionOnly,
+              locationProfile: sharedLocation() || {},
               workflow,
               extras: extraPayload,
               identity,
@@ -389,6 +418,12 @@ export function ReplacementStudio({
             );
             succeeded += 1;
           } catch (e) {
+            if (
+              /prepare the shared location description again/i.test(
+                (e as Error).message,
+              )
+            )
+              invalidProfile = true;
             failed += 1;
             if (alive.current)
               setOriginals((current) =>
@@ -418,7 +453,21 @@ export function ReplacementStudio({
         setProgress(
           `${succeeded} prompts ready, ${failed} failed${completed < rows.length ? `, ${rows.length - completed} not started` : ""}. Review each before generating.`,
         );
+    } catch (e) {
+      if (alive.current) {
+        setError((e as Error).message);
+        setProgress(
+          "Shared location preparation failed. Try preparing prompts again.",
+        );
+      }
     } finally {
+      if (invalidProfile) {
+        locationProfile.current = null;
+        if (alive.current)
+          setProgress(
+            "The shared location description needs refreshing. Prepare prompts again.",
+          );
+      }
       running.current = false;
       if (alive.current) {
         setBusy(null);
@@ -457,6 +506,7 @@ export function ReplacementStudio({
           resolution,
           keepTattoos,
           locationDescriptionOnly,
+          locationProfile: sharedLocation() || {},
           workflow,
           extras: extraPayload,
           identity,
@@ -492,6 +542,7 @@ export function ReplacementStudio({
     setWishes("");
     setKeepTattoos(false);
     setLocationDescriptionOnly(false);
+    locationProfile.current = null;
     setSubmitted(false);
     setError("");
   }
@@ -930,6 +981,16 @@ export function ReplacementStudio({
               </small>
             </span>
           </label>
+        )}
+        {sharedLocation() && (
+          <details className="image-prompt-details">
+            <summary>Shared location description</summary>
+            <p>{sharedLocation()!.description}</p>
+            <small>
+              Fixed across this series. Each photograph keeps its own camera
+              angle, crop and body-support geometry.
+            </small>
+          </details>
         )}
         <section className="replacement-extras" aria-label="Extra references">
           <div className="image-section-label">
