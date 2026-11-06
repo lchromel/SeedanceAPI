@@ -65,7 +65,11 @@ def create(user, asset_id):
         "design and materials across future crops. Leave unseen room areas and camera measurements unspecified."
     )
     observations = image_vision.analyze(
-        [asset], time.monotonic() + 100, reference_focus={1: focus}, detailed_references=[1]
+        [asset],
+        time.monotonic() + 100,
+        reference_focus={1: focus},
+        detailed_references=[1],
+        reuse=True,
     )
     description = rewrite_observation_references(
         observations[0]["description"].strip(), {}, unknown="this location"

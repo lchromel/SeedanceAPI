@@ -439,10 +439,10 @@ identity/output settings and notes, valid for 24 hours. Generating without curre
 preparation, using stale image labels, or changing the signed description is
 rejected before creating jobs. The draft can still be edited after preparation.
 The proof includes the geometry-policy version, so earlier preparation must be
-refreshed after a policy change. A canonical geometry instruction is appended to
-description-only generation prompts and replaced without duplication when a draft
-is improved. This preserves camera/body-contact anchors and the count of matched
-support furniture. The job stores `location_geometry_version`; explicit retries
+refreshed after a policy change. Geometry and support-object rules stay in the
+internal analysis/writer instructions. The final scene text describes the actual
+occupied furniture and surroundings, without an appended generic `Location geometry`
+block. Older control blocks are removed when preparing a new prompt. The job stores `location_geometry_version`; explicit retries
 retain the stored version and prompt. Existing results require a newly prepared
 prompt in a new draft to use the updated scene-transfer analysis.
 Observed location details are expandable under the individual prompt; its final
@@ -455,7 +455,52 @@ or analysis call. The signed shared identity is stored as `location_profile` in
 each job and retained on regeneration. Profiles add no server-side image copy or
 schema migration; the browser keeps its active profile in memory. Temporary location uploads still join input cleanup after the
 first completed submission, despite being absent from generation inputs. Existing
-S3 retention behavior is unchanged; no schema migration is required.
+S3 retention behavior is unchanged. The observation cache below requires migration 0009.
+
+### Reusing visual analysis
+
+Successful image observations are stored in `ImageObservation` (migration
+`0009_imageobservation`) and reused for the same owned asset, vision model,
+analysis focus, resolution and policy version. Scene-transfer observations also
+include the specific original/location pair in their key. Shared model, clothing,
+makeup and extra-reference observations are reused across originals; a rewrite or
+retry does not reread already analyzed sources. The same cache also serves the
+shared location identity stage. The cache stores text, with no additional image
+copy, and is cascade-deleted with its source Asset, including temporary cleanup.
+
+Atomic database leases coordinate web workers without holding a transaction over
+provider HTTP calls. Another request reuses the result instead of sending the same
+analysis concurrently. Partial successes are saved before an error is returned;
+the next request sends only missing sources. A location transfer still receives
+its actual original image as a geometric anchor. Internal image-number citations
+are neutralized in cached observations to keep reuse independent of source order.
+
+Missing-observation recovery runs at most two calls concurrently per request.
+Recovery has up to 25 seconds and one compact retry for transient timeout,
+rate-limit or incomplete-output errors, within the original request time budget.
+Location recovery continues to see both images. Diagnostics record only error
+categories and reference numbers; provider bodies and image data are not logged.
+Image generation submission is not automatically retried by this mechanism.
+
+### Structured photographic prompts
+
+The UI opts into `structuredPrompt: true` for AI prompt writing in Create image,
+Photo series, Makeup & hair and Wardrobe. Eight required sections are returned:
+FORMAT + MEDIUM, SUBJECT + AGE, CAMERA + FRAMING, SCENE + SETTING, MICRO-DETAILS,
+EXPRESSION + ACTION, LIGHTING and NEGATIVE CUES. The complete formatting rules are
+in `backend/studio/prompts/image_prompt_format.md`, combined with the mode's writer
+instructions. Harmless heading Markdown/case is normalized; missing sections get
+the same single bounded correction used for reference repair. API clients may
+omit the flag to retain plain prompt behavior, and manual drafts remain editable.
+
+Scene text must be concrete and source-grounded. Camera brands, exact ages,
+distances and focal lengths are included when supplied, rather than inferred
+capture metadata. Fixed iris color and face features are integrated under
+`SUBJECT + AGE`; the tattoo setting is integrated under `MICRO-DETAILS`. Structured prompts
+do not receive separate application-settings or generic geometry footers. NEGATIVE
+CUES is concise and task-specific. All eight sections and controls still fit the
+6000-character limit. Existing results keep their saved prompts; prepare a new
+prompt to use this structure.
 
 Keep tattoos is unchecked by default (`keepTattoos: false` on both replacement
 endpoints). The checked state preserves observed tattoos from the selected model,

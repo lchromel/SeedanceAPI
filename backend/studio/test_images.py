@@ -38,6 +38,9 @@ class ImageCitationTests(SimpleTestCase):
         for text, expected in (
             ("Edit Image 1 with two pillows and three lamps.", {1}),
             ("Edit Image 1, two pillows visible.", {1}),
+            ("Framing follows Image 1, 9:16 portrait crop.", {1}),
+            ("Use Image 1 and 2 pillows on the same bed.", {1}),
+            ("Use Image 1, 50 mm rendering look.", {1}),
             ("Use Images 0–2.", {0, 1, 2}),
             ("Use Images 1 and 12.", {1, 12}),
             ("Use Images 1–200.", {1, 200}),

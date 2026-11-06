@@ -493,8 +493,7 @@ class EditingModesTests(TestCase):
         job = ImageGeneration.objects.get(pk=self.generate(data).data[0]["id"])
         self.assertEqual(job.snapshot["references"], [str(original.pk)])
         self.assertEqual(job.snapshot["location_geometry_version"], 2)
-        self.assertEqual(job.snapshot["prompt"].count(replacements.LOCATION_GEOMETRY_MARKER), 1)
-        self.assertIn("Each matched support is one object represented once", job.snapshot["prompt"])
+        self.assertNotIn(replacements.LOCATION_GEOMETRY_MARKER, job.snapshot["prompt"])
         self.assertIn("single occupied bed", job.snapshot["prompt"])
 
     def test_preparation_from_before_the_support_geometry_fix_requires_refresh(self):

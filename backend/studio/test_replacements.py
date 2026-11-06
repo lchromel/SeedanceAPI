@@ -160,7 +160,7 @@ class ReplacementTests(TestCase):
             self.assertEqual(context["revisionInstructions"], "Улучши свет")
             content = chat.call_args_list[0].args[2]
             vision_images = [item for item in content if item["type"] == "image_url"]
-            self.assertEqual(len(vision_images), 2)
+            self.assertEqual(len(vision_images), 2 if original == first else 1)
             image = vision_images[0]["image_url"]["url"]
             with Image.open(io.BytesIO(base64.b64decode(image.split(",", 1)[1]))) as source:
                 self.assertEqual(source.size, size)
@@ -212,11 +212,12 @@ class ReplacementTests(TestCase):
                 item["text"] for item in chat.call_args_list[0].args[2] if item["type"] == "text"
             ]
             self.assertTrue(any("Image 1:" in text and "camera height" in text for text in texts))
-            self.assertTrue(
+            self.assertEqual(
                 any(
                     "Image 3:" in text and "Location reference" in text and "materials" in text
                     for text in texts
-                )
+                ),
+                original == portrait,
             )
             context = json.loads(chat.call_args_list[1].args[2])
             self.assertEqual(context["replacementPlan"]["location"]["source"], "Image 3")

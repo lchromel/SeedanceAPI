@@ -13,7 +13,7 @@ from PIL import Image
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
-from . import image_retention, images, location_profiles, storage
+from . import image_retention, images, location_profiles, prompt_format, storage
 from .models import Asset, ImageGeneration, Wallet
 
 ROLES = ("model", "clothing", "makeup", "hairstyle", "location")
@@ -38,14 +38,6 @@ IDENTITY_MARKER = "\n\nFixed identity details:\n"
 WORKFLOW_MARKER = "\n\nFocused edit scope:\n"
 LOCATION_GEOMETRY_MARKER = "\n\nLocation geometry:\n"
 LOCATION_GEOMETRY_VERSION = 2
-LOCATION_GEOMETRY_INSTRUCTION = (
-    "Use Image 1 as the camera, composition and body-contact anchor. Keep the person's pose and the "
-    "perspective, position, scale and visible count of furniture supporting their body. Restyle that "
-    "same furniture using the described location's materials and design. Each matched support is one "
-    "object represented once, with its surface, textiles and structural parts in one coherent "
-    "perspective. Integrate compatible "
-    "room details around these anchors, preserving contact, occlusion and the original crop."
-)
 WORKFLOW_INSTRUCTIONS = {
     "makeup": "Edit only the makeup and selected hairstyle on the original portrait. Preserve the original person's facial identity, bone structure, feature proportions, age, expression, gaze, base skin tone, pose, clothing, background and framing, subject to the explicit identity and tattoo settings. Donor references supply cosmetics and hair rather than a different face.",
     "wardrobe": "Dress the person from the original photograph or body sheet in the referenced garments. Preserve facial identity, body proportions, pose, camera, background and the arrangement of existing views, subject to the explicit identity and tattoo settings. Apply the same outfit consistently to every existing view, matching observed fabric, cut and colors with natural drape and fit.",
@@ -91,6 +83,7 @@ class ReplacementCommon(serializers.Serializer):
     identity = IdentityDetails(default=dict)
     locationDescriptionOnly = serializers.BooleanField(default=False)
     locationProfile = location_profiles.SharedProfile(default=dict)
+    structuredPrompt = serializers.BooleanField(default=False)
 
     def validate(self, data):
         location_profiles.validate(
@@ -161,6 +154,8 @@ def preparation_fingerprint(original, data, notes):
     )
     if data.get("locationProfile"):
         context["locationProfile"] = data["locationProfile"]
+    if data.get("structuredPrompt"):
+        context["structuredPrompt"] = True
     return hashlib.sha256(json.dumps(context, sort_keys=True).encode()).hexdigest()
 
 
@@ -370,13 +365,40 @@ def apply_tattoo_policy(prompt, keep_tattoos):
     return result
 
 
-def apply_controls(prompt, data):
-    # A prepared prompt may already contain the previous settings footer.
+def scene_draft(prompt):
+    # Older generated control blocks are internal settings, not scene description.
     for marker in (IDENTITY_MARKER, WORKFLOW_MARKER, LOCATION_GEOMETRY_MARKER):
         prompt = prompt.split(marker, 1)[0]
+    return prompt.strip()
+
+
+def apply_controls(prompt, data):
+    prompt = scene_draft(prompt)
+    sections = prompt_format.parse(prompt)
+    if sections:
+        tattoo = (
+            "Preserve the identity source's visible tattoos, following their observed design and placement on the visible skin."
+            if data["keepTattoos"]
+            else "Visible skin is naturally textured and free of tattoos."
+        )
+        if tattoo not in sections["MICRO-DETAILS"]:
+            sections["MICRO-DETAILS"] += " " + tattoo
+        identity = data.get("identity", {})
+        additions = []
+        if identity.get("eyeColor"):
+            additions.append(identity["eyeColor"].capitalize() + " irises.")
+        if identity.get("details"):
+            additions.append(identity["details"])
+        for addition in additions:
+            if addition not in sections["SUBJECT + AGE"]:
+                sections["SUBJECT + AGE"] += " " + addition
+        result = prompt_format.render(sections)
+        if len(result) > 6000:
+            raise ValidationError(
+                "Shorten the prompt to leave room for the fixed appearance details."
+            )
+        return result
     prompt = apply_tattoo_policy(prompt, data["keepTattoos"])
-    if data.get("locationDescriptionOnly"):
-        prompt += LOCATION_GEOMETRY_MARKER + LOCATION_GEOMETRY_INSTRUCTION
     if data.get("workflow") in WORKFLOW_INSTRUCTIONS:
         prompt += WORKFLOW_MARKER + WORKFLOW_INSTRUCTIONS[data["workflow"]]
     identity = data.get("identity", {})
@@ -434,11 +456,12 @@ def enhance(user, data):
     result = images.enhance(
         user,
         {
-            "prompt": data["prompt"] or base_prompt(plan),
+            "prompt": scene_draft(data["prompt"]) or base_prompt(plan),
             "instructions": data["instructions"],
             "references": ids,
             "ratio": ratio,
             "resolution": data["resolution"],
+            "structuredPrompt": data["structuredPrompt"],
         },
         system=SYSTEM,
         extra_context={
@@ -527,6 +550,7 @@ def generate(user, data):
                     "extra_references": data["extras"],
                     "location_description_only": data["locationDescriptionOnly"],
                     "location_profile": data["locationProfile"],
+                    "structured_prompt": data["structuredPrompt"],
                     "location_geometry_version": LOCATION_GEOMETRY_VERSION
                     if data["locationDescriptionOnly"]
                     else None,

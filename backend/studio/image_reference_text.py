@@ -8,7 +8,8 @@ _WORDS = {word: i for words in (_CARDINALS, _ORDINALS) for i, word in enumerate(
 _NOUN = r"(?:references?(?:\s+(?:images?|photographs?|photos?|pictures?))?|images?|photographs?|photos?|pictures?)"
 _NUMBER = r"(?:\d+(?:st|nd|rd|th)?|" + "|".join(_WORDS) + r")"
 _ORDINAL = r"(?:\d+(?:st|nd|rd|th)|" + "|".join(_ORDINALS) + r")"
-_TAIL = rf"(?:\s*(?:[,/&+]|and)\s*#?\s*\d+(?:st|nd|rd|th)?\b|\s*(?:[-–—−]|to|through)\s*#?\s*{_NUMBER}\b)*"
+_LIST_NUMBER = r"\d+(?:st|nd|rd|th)?\b(?!\s*[:.]\s*\d)(?!\s*(?:mm|cm|ft|feet|meters?|metres?|pixels?|px|years?|beds?|pillows?|lamps?|chairs?|people|persons?|rooms?)\b)"
+_TAIL = rf"(?:\s*(?:[,/&+]|and)\s*#?\s*{_LIST_NUMBER}|\s*(?:[-–—−]|to|through)\s*#?\s*{_NUMBER}\b)*"
 _MENTION = re.compile(
     rf"\b{_NOUN}[\s#:_\[(*`]*(?P<after>{_NUMBER})\b(?P<tail>{_TAIL})"
     rf"|\b(?P<before>{_ORDINAL})\s+{_NOUN}\b",

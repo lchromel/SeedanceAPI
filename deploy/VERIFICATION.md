@@ -1,5 +1,26 @@
 # Local verification — 2026-09-19
 
+## Observation reuse and eight-section image prompts — 2026-11-06
+
+- Full Django suite: 163 tests on SQLite (161 passed, two PostgreSQL locking
+  tests skipped). Ten new tests cover shared-reference reuse across originals,
+  writer retries without new vision calls, saved partial successes and missing-
+  source-only retries, lease ownership/expiration and cascade deletion, per-original
+  scene-pair caching, compact transient recovery, safe provider-error categories,
+  eight-section parsing/normalization, structured format repair and role/control
+  integration. Citation tests also exclude framing ratios and object counts from
+  grouped image labels.
+- Seven frontend tests, TypeScript/Vite build, Python lint, migration drift and
+  whitespace checks passed. A final targeted format/citation run passed after
+  adding bold-heading support and ratio/unit disambiguation.
+- Added migration `0009_imageobservation`. Cached observations contain text only
+  and follow source-asset deletion. Database lease behavior was checked locally;
+  actual multi-process PostgreSQL/provider throughput was not exercised.
+- Model responses were mocked. No live photo analysis, generation quality or
+  production deployment was tested. New AI prompts opt into the user's eight
+  sections; internal geometry instructions are no longer appended as generic
+  final-prompt text.
+
 ## Frequent image-reference validation failures — 2026-11-06
 
 - Reproduced the previous parser rejecting valid `Images 1 and 2` and

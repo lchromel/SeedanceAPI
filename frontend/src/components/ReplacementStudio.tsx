@@ -179,6 +179,7 @@ export function ReplacementStudio({
     extraPayload,
     identity,
     locationDescriptionOnly,
+    true, // AI prompts use the eight-section photographic brief.
   ]);
   const sharedLocation = () => {
     const cached = locationProfile.current;
@@ -393,6 +394,7 @@ export function ReplacementStudio({
               resolution,
               keepTattoos,
               locationDescriptionOnly,
+              structuredPrompt: true,
               locationProfile: sharedLocation() || {},
               workflow,
               extras: extraPayload,
@@ -506,6 +508,7 @@ export function ReplacementStudio({
           resolution,
           keepTattoos,
           locationDescriptionOnly,
+          structuredPrompt: true,
           locationProfile: sharedLocation() || {},
           workflow,
           extras: extraPayload,

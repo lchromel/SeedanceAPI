@@ -19,7 +19,10 @@ from .models import Asset
 
 
 class EnhancementError(Exception):
-    pass
+    def __init__(self, message, *, reason="unavailable", retryable=False):
+        super().__init__(message)
+        self.reason = reason
+        self.retryable = retryable
 
 
 def chat(model, system, content, *, max_tokens=1800, timeout=(5, 40)):
@@ -46,11 +49,33 @@ def chat(model, system, content, *, max_tokens=1800, timeout=(5, 40)):
         choice = response.json()["choices"][0]
         text = choice["message"]["content"]
         if choice.get("finish_reason") != "stop" or not isinstance(text, str) or not text.strip():
-            raise ValueError()
+            raise EnhancementError(
+                "AI returned an incomplete response. Your original content is unchanged; try again.",
+                reason="incomplete_response",
+                retryable=True,
+            )
         return text.strip()
-    except (requests.RequestException, KeyError, IndexError, TypeError, ValueError):
+    except requests.RequestException as exc:
+        status = exc.response.status_code if exc.response is not None else None
+        reason = (
+            "timeout"
+            if isinstance(exc, requests.Timeout)
+            else "rate_limit"
+            if status == 429
+            else "provider_error"
+        )
         raise EnhancementError(
-            "AI assistance is unavailable. Your original content is unchanged; try again."
+            "AI assistance is unavailable. Your original content is unchanged; try again.",
+            reason=reason,
+            retryable=isinstance(exc, (requests.Timeout, requests.ConnectionError))
+            or status == 429
+            or (status is not None and status >= 500),
+        ) from None
+    except (KeyError, IndexError, TypeError, ValueError):
+        raise EnhancementError(
+            "AI assistance is unavailable. Your original content is unchanged; try again.",
+            reason="invalid_response",
+            retryable=True,
         ) from None
 
 

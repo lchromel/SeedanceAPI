@@ -284,6 +284,7 @@ export function ImageStudio({
     setNotice("");
     try {
       const result = await api<{ prompt: string }>("images/enhance", "POST", {
+        structuredPrompt: true,
         prompt,
         instructions,
         references,

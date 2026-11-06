@@ -11,7 +11,7 @@ from django.db import transaction
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
-from . import enhancer, image_retention, image_vision
+from . import enhancer, image_retention, image_vision, prompt_format
 from .billing import post
 from .models import Asset, ImageGeneration, Wallet
 from .image_reference_text import reference_numbers, rewrite_observation_references
@@ -85,6 +85,7 @@ class ImageInput(serializers.Serializer):
     references = serializers.ListField(child=serializers.UUIDField(), max_length=10, default=list)
     ratio = serializers.ChoiceField(choices=list(RATIOS), default="1:1")
     resolution = serializers.ChoiceField(choices=list(RESOLUTIONS), default="2K")
+    structuredPrompt = serializers.BooleanField(default=False)
 
     def validate_references(self, ids):
         if len(ids) != len(set(ids)):
@@ -119,6 +120,7 @@ def enhance(
             scene_locations=[
                 i for i, pk in enumerate(data["references"], 1) if pk in description_only
             ],
+            reuse=True,
         )
     generation_refs = [pk for pk in data["references"] if pk not in description_only]
     observation_labels = {
@@ -157,6 +159,9 @@ def enhance(
         "instructions. Respect the requested aspect ratio. Keep under 600 English words."
     )
     writer_system = system or writer_system
+    structured = data.get("structuredPrompt", False)
+    if structured:
+        writer_system += "\n\n" + prompt_format.SYSTEM
     expected = set(range(1, len(generation_refs) + 1))
     labels = [f"Image {i}" for i in sorted(expected)]
     context = {
@@ -180,7 +185,9 @@ def enhance(
     for attempt in range(2):
         text = enhancer.chat(
             settings.DEEPSEEK_MODEL,
-            writer_system if not attempt else REFERENCE_REPAIR_SYSTEM,
+            writer_system
+            if not attempt
+            else REFERENCE_REPAIR_SYSTEM + ("\n\n" + prompt_format.SYSTEM if structured else ""),
             json.dumps(context, ensure_ascii=False),
             max_tokens=2400,
             timeout=image_vision.timeout(deadline, maximum=15 if attempt else 40),
@@ -199,13 +206,16 @@ def enhance(
                         + "."
                     )
             if additions:
-                text = " ".join(additions) + "\n\n" + text
+                text = prompt_format.add(text, "SUBJECT + AGE", " ".join(additions))
                 if len(text) > 6000:
                     raise enhancer.EnhancementError(
                         "AI returned a prompt that is too long. Try again."
                     )
                 mentioned = reference_numbers(text)
-        if mentioned == expected:
+        format_ok = not structured or prompt_format.parse(text) is not None
+        if mentioned == expected and format_ok:
+            if structured:
+                text = prompt_format.render(prompt_format.parse(text))
             result = {"prompt": text}
             if description_only:
                 result["locationDescription"] = context["locationDescription"]
@@ -217,6 +227,7 @@ def enhance(
                 "requiredLabels": labels,
                 "missingLabels": [f"Image {i}" for i in sorted(expected - mentioned)],
                 "unknownReferenceNumbers": sorted(mentioned - expected),
+                "requiredSections": list(prompt_format.HEADINGS) if structured else [],
             }
         logger.warning(
             "Image prompt reference mismatch: expected=%s missing=%s unexpected=%s attempt=%d",
@@ -224,6 +235,10 @@ def enhance(
             sorted(expected - mentioned),
             sorted(mentioned - expected),
             attempt + 1,
+        )
+    if not format_ok:
+        raise enhancer.EnhancementError(
+            "AI returned an incomplete prompt structure. Your original prompt is unchanged; retry writing the prompt."
         )
     raise enhancer.EnhancementError(
         "AI returned inconsistent image labels. "
