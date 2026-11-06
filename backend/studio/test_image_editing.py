@@ -342,8 +342,10 @@ class EditingModesTests(TestCase):
             len([item for item in chat.call_args_list[0].args[2] if item["type"] == "image_url"]), 4
         )
         recovery = chat.call_args_list[1].args[2]
-        self.assertIn("This is Image 3", recovery[0]["text"])
-        self.assertIn("250–300 words", recovery[0]["text"])
+        self.assertIn("Original photograph, Image 1", recovery[0]["text"])
+        self.assertIn("This is Image 3", recovery[2]["text"])
+        self.assertIn("250–300 words", recovery[2]["text"])
+        self.assertEqual(len([item for item in recovery if item["type"] == "image_url"]), 2)
         context = json.loads(chat.call_args_list[2].args[2])
         self.assertEqual(context["referenceLabels"], ["Image 1", "Image 2", "Image 3"])
         self.assertEqual(context["replacementPlan"]["location"]["source"], "text description")
@@ -426,6 +428,121 @@ class EditingModesTests(TestCase):
             self.assertEqual(response.status_code, 400)
             chat.assert_not_called()
 
+    def test_hotel_bed_transfer_keeps_the_occupied_bed_as_the_same_support(self):
+        original = self.upload("lying-on-bed")
+        location = self.upload("hotel-room", (320, 180))
+        data = self.data([original], {"location": location})
+        data["locationDescriptionOnly"] = True
+        transfer = (
+            "Original support: one visible bed under a reclining person, mattress angled from lower left "
+            "to upper right; torso and legs contact the mattress. Same-object match: the hotel's bed "
+            "is this occupied bed. Target staging: one continuous mattress beneath the same pose, with "
+            "headboard at the existing head end. Appearance: cream linens, a walnut headboard and warm "
+            "wall finishes from the hotel; show only room surfaces fitting the original crop."
+        )
+        full_prompt = (
+            "Edit Image 1, retaining the reclining pose and camera. Restyle the single occupied bed "
+            "with cream hotel linens and a walnut headboard at its existing head end. Its mattress "
+            "supports the torso and legs in the original perspective. Place warm room wall finishes "
+            "around this one bed within the original crop."
+        )
+        with patch.object(
+            enhancer,
+            "chat",
+            side_effect=[
+                json.dumps(
+                    {
+                        "images": [
+                            {
+                                "image": 1,
+                                "description": "Person reclining on one bed, body contacting its angled mattress.",
+                            },
+                            {"image": 2, "description": transfer},
+                        ]
+                    }
+                ),
+                full_prompt,
+            ],
+        ) as chat:
+            response = self.client.post(
+                "/api/images/replacements/prompt",
+                {
+                    "original": str(original.pk),
+                    "replacements": data["replacements"],
+                    "locationDescriptionOnly": True,
+                    "instructions": data["instructions"],
+                    "notes": data["originals"][0]["notes"],
+                    "ratio": data["ratio"],
+                    "resolution": data["resolution"],
+                },
+                format="json",
+            )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(chat.call_count, 2)
+        self.assertIn("JOINT transfer plan", chat.call_args_list[0].args[2][0]["text"])
+        self.assertIn("Same-object match", chat.call_args_list[0].args[2][0]["text"])
+        context = json.loads(chat.call_args_list[1].args[2])
+        self.assertEqual(context["locationDescription"], transfer)
+        self.assertIn("one bed", context["referenceObservations"][0]["description"])
+        data["originals"][0].update(
+            {
+                key: response.data[key]
+                for key in ("prompt", "locationDescription", "locationPreparation")
+            }
+        )
+        job = ImageGeneration.objects.get(pk=self.generate(data).data[0]["id"])
+        self.assertEqual(job.snapshot["references"], [str(original.pk)])
+        self.assertEqual(job.snapshot["location_geometry_version"], 2)
+        self.assertEqual(job.snapshot["prompt"].count(replacements.LOCATION_GEOMETRY_MARKER), 1)
+        self.assertIn("Each matched support is one object represented once", job.snapshot["prompt"])
+        self.assertIn("single occupied bed", job.snapshot["prompt"])
+
+    def test_preparation_from_before_the_support_geometry_fix_requires_refresh(self):
+        import hashlib
+        from django.core import signing
+
+        sources, data, _, description = self.location_batch()
+        serializer = replacements.ReplacementPrompt(
+            data={
+                "original": str(sources[0].pk),
+                "replacements": data["replacements"],
+                "instructions": data["instructions"],
+                "notes": data["originals"][0]["notes"],
+                "extras": data["extras"],
+                "locationDescriptionOnly": True,
+                "ratio": data["ratio"],
+                "resolution": data["resolution"],
+            },
+            context={"user": self.user},
+        )
+        serializer.is_valid(raise_exception=True)
+        validated = serializer.validated_data
+        old_context = {
+            key: validated[key]
+            for key in (
+                "replacements",
+                "extras",
+                "instructions",
+                "ratio",
+                "resolution",
+                "keepTattoos",
+                "identity",
+            )
+        }
+        old_context.update(original=str(sources[0].pk), notes=validated["notes"])
+        data["originals"][0]["locationPreparation"] = signing.dumps(
+            {
+                "context": hashlib.sha256(
+                    json.dumps(old_context, sort_keys=True).encode()
+                ).hexdigest(),
+                "description": hashlib.sha256(description.encode()).hexdigest(),
+            },
+            salt="studio.location-description",
+        )
+        response = self.client.post("/api/images/replacements/generate", data, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(ImageGeneration.objects.exists())
+
     def test_unchecked_location_continues_to_be_attached_as_an_image(self):
         original, location = self.upload("original"), self.upload("location")
         response = self.generate(self.data([original], {"location": location}))
@@ -463,6 +580,7 @@ class EditingModesTests(TestCase):
             self.assertEqual(repeated.status_code, 201, repeated.data)
             retry = ImageGeneration.objects.get(pk=repeated.data["id"])
             self.assertTrue(retry.snapshot["location_description_only"])
+            self.assertEqual(retry.snapshot["location_geometry_version"], 2)
             self.assertEqual(retry.snapshot["location_description"], description)
             self.assertEqual(len(retry.snapshot["reference_keys"]), 3)
             chat.assert_not_called()

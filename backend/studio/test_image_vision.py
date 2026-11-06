@@ -200,3 +200,42 @@ class VisionRecoveryTests(TestCase):
         self.assertEqual(Asset.objects.count(), 2)
         self.assertFalse(ImageGeneration.objects.exists())
         self.assertFalse(Ledger.objects.exists())
+
+    def test_location_recovery_sees_original_and_donor_at_detail_resolution(self):
+        for asset, color in zip(self.assets, ("red", "blue")):
+            buffer = io.BytesIO()
+            Image.new("RGB", (1600, 1000), color).save(buffer, "JPEG")
+            buffer.seek(0)
+            storage.put(asset.key, buffer, "image/jpeg")
+        transfer = (
+            "Original support: one bed under the person. Same-object match: the hotel bed is "
+            "that existing bed. Target staging: retain its mattress perspective and body contact. "
+            "Appearance: cream linens and a walnut headboard on this single bed."
+        )
+        with patch.object(
+            enhancer,
+            "chat",
+            side_effect=[
+                '{"images":[{"image":1,"description":"Person reclining on one bed."}]}',
+                transfer,
+            ],
+        ) as chat:
+            result = image_vision.analyze(
+                self.assets, time.monotonic() + 100, detailed_references=[2], scene_locations=[2]
+            )
+        self.assertEqual(chat.call_count, 2)
+        self.assertIn("JOINT transfer plan", chat.call_args_list[0].args[2][0]["text"])
+        recovery = chat.call_args_list[1].args[2]
+        self.assertIn("Original photograph, Image 1", recovery[0]["text"])
+        self.assertIn("This is Image 2", recovery[2]["text"])
+        self.assertIn("Same-object match", recovery[2]["text"])
+        pictures = [item for item in recovery if item["type"] == "image_url"]
+        self.assertEqual(len(pictures), 2)
+        for i, picture in enumerate(pictures):
+            with Image.open(
+                io.BytesIO(base64.b64decode(picture["image_url"]["url"].split(",", 1)[1]))
+            ) as actual:
+                self.assertEqual(actual.size, (1280, 800))
+                red, _, blue = actual.getpixel((0, 0))
+                self.assertGreater(red if i == 0 else blue, (blue if i == 0 else red) + 100)
+        self.assertEqual(result[1]["description"], transfer)

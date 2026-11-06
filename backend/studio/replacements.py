@@ -36,6 +36,16 @@ WORKFLOWS = {
 }
 IDENTITY_MARKER = "\n\nFixed identity details:\n"
 WORKFLOW_MARKER = "\n\nFocused edit scope:\n"
+LOCATION_GEOMETRY_MARKER = "\n\nLocation geometry:\n"
+LOCATION_GEOMETRY_VERSION = 2
+LOCATION_GEOMETRY_INSTRUCTION = (
+    "Use Image 1 as the camera, composition and body-contact anchor. Keep the person's pose and the "
+    "perspective, position, scale and visible count of furniture supporting their body. Restyle that "
+    "same furniture using the described location's materials and design. Each matched support is one "
+    "object represented once, with its surface, textiles and structural parts in one coherent "
+    "perspective. Integrate compatible "
+    "room details around these anchors, preserving contact, occlusion and the original crop."
+)
 WORKFLOW_INSTRUCTIONS = {
     "makeup": "Edit only the makeup and selected hairstyle on the original portrait. Preserve the original person's facial identity, bone structure, feature proportions, age, expression, gaze, base skin tone, pose, clothing, background and framing, subject to the explicit identity and tattoo settings. Donor references supply cosmetics and hair rather than a different face.",
     "wardrobe": "Dress the person from the original photograph or body sheet in the referenced garments. Preserve facial identity, body proportions, pose, camera, background and the arrangement of existing views, subject to the explicit identity and tattoo settings. Apply the same outfit consistently to every existing view, matching observed fabric, cut and colors with natural drape and fit.",
@@ -142,7 +152,9 @@ def preparation_fingerprint(original, data, notes):
             "identity",
         )
     }
-    context.update(original=original, notes=notes)
+    context.update(
+        original=original, notes=notes, locationGeometryVersion=LOCATION_GEOMETRY_VERSION
+    )
     return hashlib.sha256(json.dumps(context, sort_keys=True).encode()).hexdigest()
 
 
@@ -286,7 +298,9 @@ def reference_focus(plan, keep_tattoos, description_only=False):
         focus[1] = (
             "Original photograph: describe the shot size, crop, camera height and viewing direction, "
             "subject position and scale, pose, visible support/contact surfaces, foreground/background "
-            "depth and light direction. Distinguish observable geometry from uncertain estimates."
+            "depth and light direction. Identify furniture supporting the body (bed, sofa, chair or other), "
+            "its visible count, mattress/seat plane, edges, orientation, contact points and body occlusion. "
+            "Distinguish observable geometry from uncertain estimates."
         )
         number = int(location.split()[1])
         focus[number] = (
@@ -301,7 +315,10 @@ def reference_focus(plan, keep_tattoos, description_only=False):
         ).strip()
         if description_only:
             focus[number] += (
-                " This image will NOT be sent to image generation. Give a detailed English description "
+                " This image will NOT be sent to image generation. Compare it directly with Image 1. "
+                "Match its bed or other supporting furniture to the existing support beneath the person. "
+                "Describe how to restyle that same object, retaining its count, original camera and contact "
+                "geometry; then describe compatible surroundings. Give a detailed English transfer plan "
                 "in 250–300 words, under 2400 characters: spatial layout, dimensions only when observable, "
                 "architecture, surface textures and colors, distinct objects, depth, light direction and "
                 "quality, shadows and reflections. Consider the original photo's camera and crop when "
@@ -349,9 +366,11 @@ def apply_tattoo_policy(prompt, keep_tattoos):
 
 def apply_controls(prompt, data):
     # A prepared prompt may already contain the previous settings footer.
-    for marker in (IDENTITY_MARKER, WORKFLOW_MARKER):
+    for marker in (IDENTITY_MARKER, WORKFLOW_MARKER, LOCATION_GEOMETRY_MARKER):
         prompt = prompt.split(marker, 1)[0]
     prompt = apply_tattoo_policy(prompt, data["keepTattoos"])
+    if data.get("locationDescriptionOnly"):
+        prompt += LOCATION_GEOMETRY_MARKER + LOCATION_GEOMETRY_INSTRUCTION
     if data.get("workflow") in WORKFLOW_INSTRUCTIONS:
         prompt += WORKFLOW_MARKER + WORKFLOW_INSTRUCTIONS[data["workflow"]]
     identity = data.get("identity", {})
@@ -493,6 +512,9 @@ def generate(user, data):
                     "identity_lock": data["identity"],
                     "extra_references": data["extras"],
                     "location_description_only": data["locationDescriptionOnly"],
+                    "location_geometry_version": LOCATION_GEOMETRY_VERSION
+                    if data["locationDescriptionOnly"]
+                    else None,
                     "location_description": item["locationDescription"]
                     if data["locationDescriptionOnly"]
                     else "",

@@ -1,5 +1,21 @@
 # Local verification — 2026-09-19
 
+## Matched support geometry for location descriptions — 2026-11-06
+
+- Django: 143 tests on SQLite (141 passed, two PostgreSQL locking tests skipped).
+  Three new regressions cover a reclining-person/hotel-bed scene transfer through
+  prompt preparation and job creation, invalidation of preparation from the prior
+  geometry policy, and recovery that sees the correct original/donor image pair.
+  The recovery test checks actual image colors/order and 1280 px detail resolution
+  on both images. Existing payload-exclusion and temporary regeneration tests pass.
+- Python lint, migration drift and whitespace checks passed. After adding stored
+  policy-version metadata, the bed-transfer and temporary-regeneration tests also
+  passed. No frontend implementation or schema migration changed.
+- Vision/DeepSeek responses are mocked in these tests. No original/result pair was
+  supplied for visual evaluation, and no paid generation or deployment was tested.
+  The change addresses furniture correspondence and contact geometry; actual model
+  output still requires checking with the user's reference images.
+
 ## Description-only location — 2026-11-03
 
 - Django: 140 tests on SQLite (138 passed, two PostgreSQL locking tests skipped).

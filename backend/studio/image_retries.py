@@ -53,6 +53,7 @@ def regenerate(user, source, data):
         "keep_tattoos",
         "identity_lock",
         "location_description_only",
+        "location_geometry_version",
         "location_description",
     ):
         if field in source.snapshot:

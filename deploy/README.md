@@ -377,8 +377,15 @@ location reference. Unseen geometry remains unspecified.
 
 Use location for description only is unchecked by default. Enable it in Photo
 series after uploading a location (`locationDescriptionOnly: true`). Vision
-examines the location with an image edge up to 1280 px and requests a detailed
-250–300 word observation within 2400 characters. DeepSeek then writes the scene
+examines both the original and location with an image edge up to 1280 px and
+requests a joint scene-transfer plan within 2400 characters: Original support,
+Same-object match, Target staging and Appearance. The plan identifies furniture
+supporting the body, its visible count, orientation and contact, then matches it
+to the donor furniture. A hotel bed restyles the existing occupied bed rather
+than adding a background bed. The original supplies the support geometry and
+camera; the donor supplies appearance and compatible surrounding details. Recovery
+of a missing location observation also receives both actual images, while other
+reference recovery remains isolated. DeepSeek then writes the scene
 in self-contained English prose adapted to that original's camera, crop, pose and
 subject placement. The location image is removed from generation references and
 provider input keys; remaining image labels, observations, source roles and extra
@@ -392,6 +399,13 @@ server-signed proof bound to that original, description, references, wishes,
 identity/output settings and notes, valid for 24 hours. Generating without current
 preparation, using stale image labels, or changing the signed description is
 rejected before creating jobs. The draft can still be edited after preparation.
+The proof includes the geometry-policy version, so earlier preparation must be
+refreshed after a policy change. A canonical geometry instruction is appended to
+description-only generation prompts and replaced without duplication when a draft
+is improved. This preserves camera/body-contact anchors and the count of matched
+support furniture. The job stores `location_geometry_version`; explicit retries
+retain the stored version and prompt. Existing results require a newly prepared
+prompt in a new draft to use the updated scene-transfer analysis.
 Observed location details are expandable under the individual prompt; its final
 scene description is part of the full prompt. This mode requires AI preparation,
 including when other modes allow manual prompts without an assistance key.

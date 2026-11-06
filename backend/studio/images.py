@@ -122,6 +122,9 @@ def enhance(
             detailed_references=[
                 i for i, pk in enumerate(data["references"], 1) if pk in description_only
             ],
+            scene_locations=[
+                i for i, pk in enumerate(data["references"], 1) if pk in description_only
+            ],
         )
     generation_refs = [pk for pk in data["references"] if pk not in description_only]
     described = []
