@@ -302,18 +302,20 @@ def original_ratio(asset):
         raise ValidationError("An original expired. Upload it again.") from None
 
 
-def reference_focus(plan, keep_tattoos, description_only=False):
+def reference_focus(plan, keep_tattoos, description_only=False, *, workflow="replacement"):
     """Observe the source camera and donor environment before DeepSeek stages the edit."""
     location = plan["location"]["source"]
     focus = {}
-    if location != "original":
+    if workflow == "replacement" or location != "original":
         focus[1] = (
-            "Original photograph: describe the shot size, crop, camera height and viewing direction, "
+            ("Composition reference" if workflow == "replacement" else "Original photograph")
+            + ": describe the shot size, crop, camera height and viewing direction, "
             "subject position and scale, pose, visible support/contact surfaces, foreground/background "
             "depth and light direction. Identify furniture supporting the body (bed, sofa, chair or other), "
             "its visible count, mattress/seat plane, edges, orientation, contact points and body occlusion. "
             "Distinguish observable geometry from uncertain estimates."
         )
+    if location != "original":
         number = int(location.split()[1])
         focus[number] = (
             focus.get(number, "")
@@ -442,9 +444,11 @@ def apply_controls(prompt, data, *, original=None):
     return prompt
 
 
-def base_prompt(plan):
+def base_prompt(plan, *, workflow="replacement"):
     parts = [
-        "Edit Image 1, the original photograph, preserving its pose, expression, camera viewpoint and composition."
+        "Generate a new photograph using Image 1 as the reference for composition, camera viewpoint, framing, subject placement and pose."
+        if workflow == "replacement"
+        else "Edit Image 1, the original photograph, preserving its pose, expression, camera viewpoint and composition."
     ]
     for item in plan.values():
         if item["source"] == "original":
@@ -470,7 +474,9 @@ def enhance(user, data):
         description_only=data["locationDescriptionOnly"],
     )
     ratio = original_ratio(original) if data["ratio"] == "original" else data["ratio"]
-    focus = reference_focus(analysis_plan, data["keepTattoos"], data["locationDescriptionOnly"])
+    focus = reference_focus(
+        analysis_plan, data["keepTattoos"], data["locationDescriptionOnly"], workflow=data["workflow"]
+    )
     if data["locationProfile"]:
         number = ids.index(data["replacements"]["location"]) + 1
         focus[number] = focus.get(number, "") + (
@@ -482,7 +488,7 @@ def enhance(user, data):
     result = images.enhance(
         user,
         {
-            "prompt": scene_draft(data["prompt"]) or base_prompt(plan),
+            "prompt": scene_draft(data["prompt"]) or base_prompt(plan, workflow=data["workflow"]),
             "instructions": data["instructions"],
             "references": ids,
             "ratio": ratio,
@@ -495,6 +501,9 @@ def enhance(user, data):
             "individualWishes": data["notes"],
             "tattooPolicy": TATTOO_INSTRUCTIONS[data["keepTattoos"]],
             "workflow": data["workflow"],
+            "originalReferenceRole": images.COMPOSITION_REFERENCE_ROLE
+            if data["workflow"] == "replacement"
+            else "the original photograph to edit",
             "identityLock": data["identity"],
             "hairColorPolicy": hair_color_policy(data["original"], data),
             "locationDescriptionOnly": data["locationDescriptionOnly"],

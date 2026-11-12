@@ -778,7 +778,10 @@ class EditingModesTests(TestCase):
             )
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(chat.call_count, 2)
-        self.assertIn("Use Image 1 for the original photograph to edit.", response.data["prompt"])
+        self.assertIn(
+            "Use Image 1 for composition, camera viewpoint, framing, subject placement and pose.",
+            response.data["prompt"],
+        )
         self.assertIn("Use Image 2 for the clothing and accessories.", response.data["prompt"])
         self.assertIn("fitted blue jacket with natural fabric folds", response.data["prompt"])
         self.assertFalse(ImageGeneration.objects.exists())

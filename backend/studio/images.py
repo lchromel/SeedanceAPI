@@ -19,6 +19,7 @@ from .image_reference_text import reference_numbers, rewrite_observation_referen
 
 RATIOS = {"1:1": (1, 1), "4:3": (4, 3), "3:4": (3, 4), "16:9": (16, 9), "9:16": (9, 16)}
 RESOLUTIONS = {"1K": 1_048_576, "1.5K": 2_359_296, "2K": 4_194_304}
+COMPOSITION_REFERENCE_ROLE = "composition, camera viewpoint, framing, subject placement and pose"
 
 logger = logging.getLogger(__name__)
 REFERENCE_REPAIR_SYSTEM = (
@@ -30,7 +31,7 @@ def known_reference_roles(context):
     """Only server-owned English role assignments can fill omitted reference labels."""
     if not context.get("replacementPlan"):
         return {}
-    roles = {1: ["the original photograph to edit"]}
+    roles = {1: [context.get("originalReferenceRole", "the original photograph to edit")]}
     for item in context["replacementPlan"].values():
         match = re.fullmatch(r"Image (\d+)", item["source"])
         if match:

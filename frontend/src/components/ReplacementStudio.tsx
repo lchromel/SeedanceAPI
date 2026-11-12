@@ -25,12 +25,12 @@ const workflowRoles: Record<EditWorkflow, ReplacementRole[]> = {
 };
 const workflowCopy = {
   replacement: {
-    title: "Original photographs",
-    add: "Add original photographs",
-    help: "One original, one individual prompt, one separate generation.",
-    empty: "Build a series from your originals",
+    title: "Composition references",
+    add: "Add composition references",
+    help: "One composition reference, one individual prompt, one new photograph.",
+    empty: "Build a series from reference compositions",
     detail:
-      "Each photograph keeps its own pose, framing and individual prompt.",
+      "Each reference guides the camera angle, framing, subject placement and pose.",
   },
   makeup: {
     title: "Original portrait",
