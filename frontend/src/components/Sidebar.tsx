@@ -60,7 +60,7 @@ export function Sidebar({
       {mode === "images" ? (
         !collapsed && (
           <div className="image-sidebar-note">
-            <h2>Seedream 5 Pro</h2>
+            <h2>Seedream 5.5</h2>
             <p>
               Start with an idea.
               <br />

@@ -187,7 +187,7 @@ Railway: set the service Pre-deploy Command to `python manage.py migrate --noinp
 in service settings. The production service has this configured. Do not rely on
 an unconfigured railway.json being picked up automatically by a new service.
 
-### Image studio — Seedream 5 Pro
+### Image studio — Seedream 5.5
 
 The sidebar switches between Video and Images. Images accepts up to ten JPG, PNG
 or WebP references, 30 MB each, in attachment order (Image 1, Image 2, etc.). Uploads
@@ -208,8 +208,10 @@ Set on web, generation worker and scheduler:
   image generation is independent of this variable and the user's credit balance.
   There is no default production tariff. The same internal tariff applies to all
   offered sizes/reference counts; this is not a claim about provider pricing.
-- `SEEDREAM_ENDPOINT_ID`: optional Pro endpoint override; default model is
-  `dola-seedream-5-0-pro-260628`. `BYTEPLUS_SEEDREAM_ENDPOINT_ID` is also supported.
+- `SEEDREAM_ENDPOINT_ID`: optional endpoint override; default model is
+  `seedream-5-5-261028`. `BYTEPLUS_SEEDREAM_ENDPOINT_ID` is also supported.
+  Remove an old override to use the default, or point it to a Seedream 5.5 endpoint
+  on every service. The model must be enabled for the server's BytePlus account.
 - Existing `ARK_API_KEY`, private S3 settings and `PROVIDER_OUTPUT_HOSTS` must be
   configured. The output allowlist must include the actual image result hosts.
 
@@ -217,7 +219,9 @@ Apply migrations before restarting web, worker and beat. The existing Celery
 generation worker and scheduler also process image jobs; no additional service
 is needed. The adapter calls `/images/generations`, creates one image per request,
 and offers 1K, 1.5K and 2K with five aspect ratios, sent as explicit pixel sizes.
+The provider returns PNG; stored previews and downloads are converted to JPEG.
 There is no batch/streaming parameter or fallback to a different image model.
+Existing jobs retain the model recorded in their immutable snapshot.
 
 When `CREDITS_ENABLED=1`, credits are reserved atomically with idempotent job creation, settled after the
 image is stored privately, and released on confirmed rejection. A timeout during
@@ -260,7 +264,7 @@ the draft and identify the affected image. Logs contain recovery counts only,
 not images, descriptions or provider responses.
 
 API reference: [BytePlus image generation](https://docs.byteplus.com/en/docs/modelark/image-generation-api),
-[Seedream 5 Pro examples](https://docs.byteplus.com/en/docs/modelark/seedream-5-0-pro).
+[Seedream 5.5 integration and model ID](https://github.com/Comfy-Org/ComfyUI/blob/master/comfy_api_nodes/nodes_bytedance.py).
 
 ### Image storage switch and temporary retention
 

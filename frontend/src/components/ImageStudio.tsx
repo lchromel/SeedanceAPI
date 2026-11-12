@@ -338,7 +338,7 @@ export function ImageStudio({
       <header className="project-header image-studio-header">
         <div>
           <h1>Image studio</h1>
-          <span className="image-model">Seedream 5 Pro</span>
+          <span className="image-model">{settings.model}</span>
         </div>
         <nav className="image-mode-switch" aria-label="Image generation mode">
           {(
@@ -493,7 +493,7 @@ export function ImageStudio({
         >
           <div className="image-composer-heading">
             <h2>Create an image</h2>
-            <small>Seedream 5 Pro</small>
+            <small>{settings.model}</small>
           </div>
           {settings.storage === "temporary" && (
             <p className="image-notice">

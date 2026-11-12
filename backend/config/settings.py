@@ -140,7 +140,7 @@ REFERENCE_VISION_MODEL = os.getenv("REFERENCE_VISION_ENDPOINT_ID") or "seed-2-0-
 SEEDREAM_MODEL = (
     os.getenv("SEEDREAM_ENDPOINT_ID")
     or os.getenv("BYTEPLUS_SEEDREAM_ENDPOINT_ID")
-    or "dola-seedream-5-0-pro-260628"
+    or "seedream-5-5-261028"
 )
 CREDITS_PER_IMAGE = int(os.environ["CREDITS_PER_IMAGE"]) if os.getenv("CREDITS_PER_IMAGE") else None
 SAVE_IMAGES_TO_S3 = os.getenv("SAVE_IMAGES_TO_S3", "1") == "1"

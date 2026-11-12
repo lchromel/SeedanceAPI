@@ -21,7 +21,7 @@ def submit(job):
         "model": job.snapshot["model"],
         "prompt": job.snapshot["prompt"],
         "size": job.snapshot["size"],
-        "output_format": "jpeg",
+        "output_format": "png",
         "response_format": "url",
         "watermark": False,
     }

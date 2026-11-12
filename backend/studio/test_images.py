@@ -501,7 +501,7 @@ class ImageTests(TestCase):
         self.assertEqual(job.state, "review")
 
     @override_settings(ARK_API_KEY="test-only")
-    def test_provider_payload_uses_pro_model_ordered_references_and_supported_fields(self):
+    def test_provider_payload_uses_seedream_55_ordered_references_and_supported_fields(self):
         job = self.paid_job()
         job.snapshot["reference_keys"] = ["first", "second"]
         response = Mock(status_code=200)
@@ -514,7 +514,8 @@ class ImageTests(TestCase):
         ):
             self.assertEqual(image_tasks.submit(job), "https://provider.example/result.jpg")
         payload = call.call_args.kwargs["json"]
-        self.assertEqual(payload["model"], "dola-seedream-5-0-pro-260628")
+        self.assertEqual(payload["model"], "seedream-5-5-261028")
+        self.assertEqual(payload["output_format"], "png")
         self.assertEqual(
             payload["image"], ["https://private.example/first", "https://private.example/second"]
         )
