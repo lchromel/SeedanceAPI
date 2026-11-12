@@ -173,8 +173,11 @@ images use Other rather than guessing a specific place type.
 
 Both models use the existing server-only `ARK_API_KEY`. Optional overrides:
 `REFERENCE_VISION_ENDPOINT_ID` and `DEEPSEEK_ENDPOINT_ID` (the legacy
-`BYTEPLUS_DEEPSEEK_ENDPOINT_ID` is also supported). Defaults match the original
-app: `seed-2-0-lite-260228` and `deepseek-v4-pro-260425`. These calls use the
+`BYTEPLUS_DEEPSEEK_ENDPOINT_ID` is also supported). Defaults are
+`dola-seed-2-1-turbo-260628` and `deepseek-v4-pro-260425`. If
+`REFERENCE_VISION_ENDPOINT_ID` is already set, update it to the new model ID or an
+active endpoint for that model, or remove it to use the default. Redeploy the web
+service after changing the model. These calls use the
 provider account's inference billing; they do not launch video-generation jobs.
 
 Improve with DeepSeek uses the current unsaved scene and selected reference
