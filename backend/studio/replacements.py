@@ -21,7 +21,7 @@ ASPECTS = {
     "model": "the primary person's identity and overall appearance",
     "clothing": "the clothing and accessories",
     "makeup": "the makeup",
-    "hairstyle": "the hairstyle",
+    "hairstyle": "the hairstyle and hair color",
     "location": "the location and background",
 }
 SYSTEM = (Path(__file__).with_name("prompts") / "seedream_replacement.md").read_text()
@@ -35,6 +35,17 @@ WORKFLOWS = {
     "wardrobe": ("clothing",),
 }
 IDENTITY_MARKER = "\n\nFixed identity details:\n"
+HAIR_COLOR_MARKER = "\n\nHair reference:\n"
+HAIR_COLOR_POLICIES = {
+    f"Image {number}": (
+        f"Match the hairstyle and hair color to Image {number}, the hairstyle reference. "
+        "Use its observed base hue, saturation, roots, highlights and color placement "
+        "where visible, adapting brightness and reflections to the scene lighting. "
+        "This reference takes priority over the original photograph and model reference "
+        "for hair color; preserve the intended person's facial identity."
+    )
+    for number in range(1, 11)
+}
 WORKFLOW_MARKER = "\n\nFocused edit scope:\n"
 LOCATION_GEOMETRY_MARKER = "\n\nLocation geometry:\n"
 LOCATION_GEOMETRY_VERSION = 2
@@ -340,7 +351,7 @@ def reference_focus(plan, keep_tattoos, description_only=False):
     for role, task in {
         "model": "Describe the identity source's visible facial structure, eye shape and iris color, nose, lips, eyebrows and distinctive permanent features. Mark uncertain colors under lighting as uncertain.",
         "makeup": "Describe only the cosmetic reference's makeup placement, shades, texture and finish on eyes, brows, cheeks and lips. Separate cosmetic effects from face anatomy and iris color.",
-        "hairstyle": "Describe the hair reference's parting, silhouette, length, texture, styling and color. Keep its person's face separate from hair attributes.",
+        "hairstyle": "Describe the hair reference's parting, silhouette, length, texture and styling. Explicitly identify its observed hair base hue, saturation, roots, highlights and color placement where visible. Distinguish hair pigmentation from colored lighting and reflections; mark uncertain or hidden colors as uncertain. Keep its person's face separate from hair attributes.",
         "clothing": "Describe the garments, accessories, cut, fabric, colors, closures and fit. For a body sheet, observe each existing view and the sheet layout.",
     }.items():
         source = plan[role]["source"]
@@ -367,13 +378,24 @@ def apply_tattoo_policy(prompt, keep_tattoos):
 
 def scene_draft(prompt):
     # Older generated control blocks are internal settings, not scene description.
-    for marker in (IDENTITY_MARKER, WORKFLOW_MARKER, LOCATION_GEOMETRY_MARKER):
+    for marker in (IDENTITY_MARKER, HAIR_COLOR_MARKER, WORKFLOW_MARKER, LOCATION_GEOMETRY_MARKER):
         prompt = prompt.split(marker, 1)[0]
+    for policy in HAIR_COLOR_POLICIES.values():
+        prompt = prompt.replace(policy, "")
     return prompt.strip()
 
 
-def apply_controls(prompt, data):
+def hair_color_policy(original, data):
+    source = data.get("replacements", {}).get("hairstyle")
+    if not source:
+        return ""
+    number = generation_ids(original, data).index(source) + 1
+    return HAIR_COLOR_POLICIES[f"Image {number}"]
+
+
+def apply_controls(prompt, data, *, original=None):
     prompt = scene_draft(prompt)
+    hair = hair_color_policy(original or data.get("original"), data)
     sections = prompt_format.parse(prompt)
     if sections:
         tattoo = (
@@ -389,6 +411,8 @@ def apply_controls(prompt, data):
             additions.append(identity["eyeColor"].capitalize() + " irises.")
         if identity.get("details"):
             additions.append(identity["details"])
+        if hair:
+            additions.append(hair)
         for addition in additions:
             if addition not in sections["SUBJECT + AGE"]:
                 sections["SUBJECT + AGE"] += " " + addition
@@ -411,6 +435,8 @@ def apply_controls(prompt, data):
         details.append(identity["details"])
     if details:
         prompt += IDENTITY_MARKER + " ".join(details)
+    if hair:
+        prompt += HAIR_COLOR_MARKER + hair
     if len(prompt) > 6000:
         raise ValidationError("Shorten the prompt to leave room for the fixed identity details.")
     return prompt
@@ -470,6 +496,7 @@ def enhance(user, data):
             "tattooPolicy": TATTOO_INSTRUCTIONS[data["keepTattoos"]],
             "workflow": data["workflow"],
             "identityLock": data["identity"],
+            "hairColorPolicy": hair_color_policy(data["original"], data),
             "locationDescriptionOnly": data["locationDescriptionOnly"],
             "sharedLocationIdentity": data["locationProfile"].get("description", ""),
             "extraReferences": [
@@ -527,7 +554,7 @@ def generate(user, data):
             job = images.generate(
                 user,
                 {
-                    "prompt": apply_controls(item["prompt"], data),
+                    "prompt": apply_controls(item["prompt"], data, original=item["asset"]),
                     "ratio": ratio,
                     "resolution": data["resolution"],
                     "references": generation_ids(item["asset"], data),
